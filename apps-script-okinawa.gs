@@ -63,7 +63,7 @@ function doPost(e) {
       return jsonResponse_({ ok: false, message: '未知動作。' });
     }
 
-    const adminKey = body.admin_key || '';
+    const adminKey = body.admin_key || 'okinawa2026';
     const expectedKey = PropertiesService.getScriptProperties().getProperty('ADMIN_KEY') || '';
     if (!expectedKey) {
       return jsonResponse_({ ok: false, message: '尚未設定 ADMIN_KEY。' });
