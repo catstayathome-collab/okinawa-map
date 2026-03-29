@@ -10,6 +10,44 @@ function getTargetSheet_() {
   return ss.getSheets()[0];
 }
 
+function getHeaders_() {
+  const sheet = getTargetSheet_();
+  const values = sheet.getDataRange().getDisplayValues();
+  if (!values.length) return [];
+  return values[0].map(h => String(h).trim());
+}
+
+function getAdminKey_() {
+  return PropertiesService.getScriptProperties().getProperty('ADMIN_KEY') || '';
+}
+
+function response_(payload, prefix) {
+  const json = JSON.stringify(payload);
+
+  if (prefix) {
+    return ContentService
+      .createTextOutput(prefix + '(' + json + ')')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+
+  return ContentService
+    .createTextOutput(json)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function jsonResponse_(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function parseCoords_(coords) {
+  if (!coords) return { lat: '', lng: '' };
+  const parts = String(coords).split(',').map(s => s.trim());
+  if (parts.length < 2) return { lat: '', lng: '' };
+  return { lat: parts[0] || '', lng: parts[1] || '' };
+}
+
 function sheetToObjects_() {
   const sheet = getTargetSheet_();
   const values = sheet.getDataRange().getDisplayValues();
@@ -27,9 +65,9 @@ function sheetToObjects_() {
       });
 
       if (obj.coords && String(obj.coords).includes(',')) {
-        const parts = String(obj.coords).split(',').map(s => s.trim());
-        obj.lat = parts[0] || '';
-        obj.lng = parts[1] || '';
+        const parsed = parseCoords_(obj.coords);
+        obj.lat = parsed.lat;
+        obj.lng = parsed.lng;
       }
 
       return obj;
@@ -38,19 +76,25 @@ function sheetToObjects_() {
 
 function doGet(e) {
   try {
-    if (e && e.parameter && e.parameter.action === 'add_item') {
-      const payload = addItemFromRequest_(e.parameter);
-      return response_(payload, e.parameter.prefix);
+    const action = e && e.parameter ? e.parameter.action : '';
+
+    if (action === 'add_item') {
+      return response_(addItemFromRequest_(e.parameter), e.parameter.prefix);
+    }
+    if (action === 'update_item') {
+      return response_(updateItemFromRequest_(e.parameter), e.parameter.prefix);
+    }
+    if (action === 'delete_item') {
+      return response_(deleteItemFromRequest_(e.parameter), e.parameter.prefix);
     }
 
     const items = sheetToObjects_();
-    const payload = {
+    return response_({
       ok: true,
       updatedAt: new Date().toISOString(),
       count: items.length,
       items: items,
-    };
-    return response_(payload, e && e.parameter ? e.parameter.prefix : '');
+    }, e && e.parameter ? e.parameter.prefix : '');
   } catch (error) {
     return response_({ ok: false, message: error.message || String(error) }, e && e.parameter ? e.parameter.prefix : '');
   }
@@ -58,53 +102,38 @@ function doGet(e) {
 
 function doPost(e) {
   try {
-    const body = parsePostBody_(e);
-    if (!body || body.action !== 'add_item') {
-      return jsonResponse_({ ok: false, message: '未知動作。' });
-    }
-    const payload = addItemFromRequest_(body);
-    return jsonResponse_(payload);
+    const body = parsePostBody_(e) || {};
+    if (body.action === 'add_item') return jsonResponse_(addItemFromRequest_(body));
+    if (body.action === 'update_item') return jsonResponse_(updateItemFromRequest_(body));
+    if (body.action === 'delete_item') return jsonResponse_(deleteItemFromRequest_(body));
+    return jsonResponse_({ ok: false, message: '未知動作。' });
   } catch (error) {
     return jsonResponse_({ ok: false, message: error.message || String(error) });
   }
 }
 
-function addItemFromRequest_(params) {
-  const adminKey = params.admin_key || '';
-  const expectedKey = PropertiesService.getScriptProperties().getProperty('ADMIN_KEY') || '';
-  if (!expectedKey) {
-    return { ok: false, message: '尚未設定 ADMIN_KEY。' };
-  }
-  if (adminKey !== expectedKey) {
-    return { ok: false, message: '管理密碼錯誤。' };
-  }
-
-  const item = params.item || params;
-  const validationError = validateItem_(item);
-  if (validationError) {
-    return { ok: false, message: validationError };
-  }
-
-  const sheet = getTargetSheet_();
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0].map(h => String(h).trim());
-  const rowObject = buildRowObject_(item);
-  const row = headers.map(header => rowObject[header] ?? '');
-  sheet.appendRow(row);
-
-  return { ok: true, message: '已新增到 Google Sheets。' };
-}
-
 function parsePostBody_(e) {
   if (!e || !e.postData || !e.postData.contents) return null;
-  const text = e.postData.contents;
   try {
-    return JSON.parse(text);
+    return JSON.parse(e.postData.contents);
   } catch (err) {
     return null;
   }
 }
 
-function validateItem_(item) {
+function requireAdminKey_(params) {
+  const expectedKey = getAdminKey_();
+  if (!expectedKey) {
+    return { ok: false, message: '尚未設定 ADMIN_KEY。' };
+  }
+  if (!params.admin_key || params.admin_key !== expectedKey) {
+    return { ok: false, message: '管理密碼錯誤。' };
+  }
+  return { ok: true, message: '驗證通過。' };
+}
+
+function validateItem_(item, requireId) {
+  if (requireId && (!item.id || !String(item.id).trim())) return '缺少 id。';
   if (!item.date || !/^\d{4}-\d{2}-\d{2}$/.test(String(item.date).trim())) return 'date 格式需為 YYYY-MM-DD。';
   if (!item.day || !/^day\d+$/i.test(String(item.day).trim())) return 'day 欄請填像 day1、day2。';
   if (!item.order || !/^\d+$/.test(String(item.order).trim())) return 'order 必須是正整數。';
@@ -115,9 +144,13 @@ function validateItem_(item) {
   return '';
 }
 
-function buildRowObject_(item) {
+function buildRowObject_(item, preserveId) {
+  const day = String(item.day || '').trim();
+  const order = String(item.order || '').trim();
+  const generatedId = preserveId || (item.id && String(item.id).trim()) || (day && order ? day + '-' + order + '-' + Date.now() : 'item-' + Date.now());
+
   return {
-    id: item.id || '',
+    id: generatedId,
     date: item.date || '',
     day: item.day || '',
     order: item.order || '',
@@ -135,6 +168,7 @@ function buildRowObject_(item) {
 }
 
 function autoGoogleMapsUrl_(item) {
+  if (item.google_maps_url) return String(item.google_maps_url).trim();
   if (item.coords && String(item.coords).includes(',')) {
     return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(String(item.coords).trim());
   }
@@ -142,17 +176,73 @@ function autoGoogleMapsUrl_(item) {
   return q ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q) : '';
 }
 
-function response_(obj, prefix) {
-  if (prefix) {
-    return ContentService
-      .createTextOutput(prefix + '(' + JSON.stringify(obj) + ')')
-      .setMimeType(ContentService.MimeType.JAVASCRIPT);
-  }
-  return jsonResponse_(obj);
+function buildRowArray_(rowObject, headers) {
+  return headers.map(header => rowObject[header] ?? '');
 }
 
-function jsonResponse_(obj) {
-  return ContentService
-    .createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
+function findRowIndexById_(id) {
+  const sheet = getTargetSheet_();
+  const values = sheet.getDataRange().getDisplayValues();
+  if (values.length < 2) return -1;
+
+  const headers = values[0].map(h => String(h).trim());
+  const idIndex = headers.indexOf('id');
+  if (idIndex === -1) throw new Error('表頭缺少 id 欄位。');
+
+  for (var i = 1; i < values.length; i += 1) {
+    if (String(values[i][idIndex]).trim() === String(id).trim()) {
+      return i + 1;
+    }
+  }
+  return -1;
+}
+
+function addItemFromRequest_(params) {
+  const auth = requireAdminKey_(params);
+  if (!auth.ok) return auth;
+
+  const item = params.item || params;
+  const validationError = validateItem_(item, false);
+  if (validationError) return { ok: false, message: validationError };
+
+  const headers = getHeaders_();
+  if (!headers.length) return { ok: false, message: '找不到表頭，無法寫入。' };
+
+  const rowObject = buildRowObject_(item, '');
+  const row = buildRowArray_(rowObject, headers);
+  getTargetSheet_().appendRow(row);
+  return { ok: true, message: '已新增到 Google Sheets。', id: rowObject.id };
+}
+
+function updateItemFromRequest_(params) {
+  const auth = requireAdminKey_(params);
+  if (!auth.ok) return auth;
+
+  const item = params.item || params;
+  const validationError = validateItem_(item, true);
+  if (validationError) return { ok: false, message: validationError };
+
+  const rowIndex = findRowIndexById_(item.id);
+  if (rowIndex === -1) return { ok: false, message: '找不到要更新的資料。' };
+
+  const headers = getHeaders_();
+  const rowObject = buildRowObject_(item, item.id);
+  const row = buildRowArray_(rowObject, headers);
+  getTargetSheet_().getRange(rowIndex, 1, 1, row.length).setValues([row]);
+  return { ok: true, message: '已更新 Google Sheets。', id: item.id };
+}
+
+function deleteItemFromRequest_(params) {
+  const auth = requireAdminKey_(params);
+  if (!auth.ok) return auth;
+
+  if (!params.id || !String(params.id).trim()) {
+    return { ok: false, message: '缺少 id。' };
+  }
+
+  const rowIndex = findRowIndexById_(params.id);
+  if (rowIndex === -1) return { ok: false, message: '找不到要刪除的資料。' };
+
+  getTargetSheet_().deleteRow(rowIndex);
+  return { ok: true, message: '已刪除這筆資料。', id: params.id };
 }

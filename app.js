@@ -12,6 +12,9 @@ const state = {
   markersLayer: null,
   routeLayer: null,
   markerMap: new Map(),
+  userMarker: null,
+  userCircle: null,
+  watchId: null,
 };
 
 const defaultCenter = [26.2124, 127.6809];
@@ -23,14 +26,17 @@ const currentDayTitleEl = document.getElementById("current-day-title");
 const heroDateEl = document.getElementById("hero-date");
 const heroTitleEl = document.getElementById("hero-title");
 const fitDayBtn = document.getElementById("fit-day-btn");
+const geoBtn = document.getElementById("geo-btn");
 const cardTemplate = document.getElementById("itinerary-card-template");
-const addModalEl = document.getElementById("add-modal");
-const addFormEl = document.getElementById("add-form");
-const addFormMessageEl = document.getElementById("add-form-message");
+const itemModalEl = document.getElementById("item-modal");
+const itemFormEl = document.getElementById("item-form");
+const itemFormMessageEl = document.getElementById("item-form-message");
 const openAddModalBtn = document.getElementById("open-add-modal-btn");
-const closeAddModalBtn = document.getElementById("close-add-modal-btn");
-const cancelAddBtn = document.getElementById("cancel-add-btn");
-const submitAddBtn = document.getElementById("submit-add-btn");
+const closeItemModalBtn = document.getElementById("close-item-modal-btn");
+const cancelItemBtn = document.getElementById("cancel-item-btn");
+const submitItemBtn = document.getElementById("submit-item-btn");
+const formKickerEl = document.getElementById("form-kicker");
+const formTitleEl = document.getElementById("form-title");
 
 bootstrap();
 
@@ -39,20 +45,7 @@ async function bootstrap() {
   bindEvents();
 
   try {
-    const remoteItems = await loadRemoteSheetData();
-    state.allItems = normalizeItems(remoteItems);
-    state.groupedItems = groupItemsByDay(state.allItems);
-    state.orderedDays = sortDays(Object.keys(state.groupedItems));
-
-    if (!state.orderedDays.length) {
-      renderNoData();
-      return;
-    }
-
-    state.currentDay = state.orderedDays[0];
-    state.selectedId = getDefaultSelectedId(state.currentDay);
-    renderDayTabs();
-    renderCurrentDay({ fitBounds: true });
+    await reloadFromRemote();
   } catch (error) {
     console.error(error);
     renderLoadError(error);
@@ -72,41 +65,19 @@ function initMap() {
 
 function bindEvents() {
   fitDayBtn?.addEventListener("click", () => fitCurrentDayBounds({ animate: true }));
+  geoBtn?.addEventListener("click", toggleUserLocationWatch);
   window.addEventListener("resize", () => state.map?.invalidateSize());
 
-  openAddModalBtn?.addEventListener("click", openAddModal);
-  closeAddModalBtn?.addEventListener("click", closeAddModal);
-  cancelAddBtn?.addEventListener("click", closeAddModal);
-  addFormEl?.addEventListener("submit", handleAddSubmit);
-  addModalEl?.addEventListener("click", (event) => {
-    if (event.target === addModalEl) closeAddModal();
+  openAddModalBtn?.addEventListener("click", () => openItemModal("add"));
+  closeItemModalBtn?.addEventListener("click", closeItemModal);
+  cancelItemBtn?.addEventListener("click", closeItemModal);
+  itemFormEl?.addEventListener("submit", handleItemSubmit);
+  itemModalEl?.addEventListener("click", (event) => {
+    if (event.target === itemModalEl) closeItemModal();
   });
 }
 
-function openAddModal() {
-  if (!addModalEl || !addFormEl) return;
-  clearFormMessage();
-  presetFormDefaults();
-  addModalEl.showModal();
-}
-
-function closeAddModal() {
-  addModalEl?.close();
-}
-
-function presetFormDefaults() {
-  if (!addFormEl) return;
-  const today = state.currentDay || "day1";
-  const items = getItemsForDay(today);
-  const nextOrder = (items.reduce((max, item) => Math.max(max, Number(item.order) || 0), 0) || 0) + 1;
-  const firstItemDate = items[0]?.date || formatDateInput(new Date());
-  addFormEl.elements.day.value = today;
-  addFormEl.elements.order.value = String(nextOrder);
-  addFormEl.elements.date.value = firstItemDate;
-  if (!addFormEl.elements.status.value) addFormEl.elements.status.value = "planned";
-}
-
-function requestJsonp(params = {}, { timeout = 12000 } = {}) {
+function requestJsonp(params = {}, { timeout = 12000, includeEmpty = false } = {}) {
   return new Promise((resolve, reject) => {
     const callbackName = `__sheetCallback_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const timeoutId = setTimeout(() => {
@@ -116,8 +87,8 @@ function requestJsonp(params = {}, { timeout = 12000 } = {}) {
 
     const url = new URL(SHEET_API_URL);
     Object.entries(params).forEach(([key, value]) => {
-      if (value === undefined || value === null || value === "") return;
-      url.searchParams.set(key, String(value));
+      if (!includeEmpty && (value === undefined || value === null || value === "")) return;
+      url.searchParams.set(key, value == null ? "" : String(value));
     });
     url.searchParams.set("prefix", callbackName);
 
@@ -152,6 +123,34 @@ async function loadRemoteSheetData() {
   return payload.items;
 }
 
+async function reloadFromRemote(preferredDay = null, preferredId = null, fitBounds = false) {
+  const remoteItems = await loadRemoteSheetData();
+  state.allItems = normalizeItems(remoteItems);
+  state.groupedItems = groupItemsByDay(state.allItems);
+  state.orderedDays = sortDays(Object.keys(state.groupedItems));
+
+  if (!state.orderedDays.length) {
+    state.currentDay = null;
+    state.selectedId = null;
+    renderNoData();
+    return;
+  }
+
+  state.currentDay = preferredDay && state.groupedItems[preferredDay]
+    ? preferredDay
+    : state.currentDay && state.groupedItems[state.currentDay]
+      ? state.currentDay
+      : state.orderedDays[0];
+
+  const currentItems = getItemsForDay(state.currentDay);
+  state.selectedId = preferredId && currentItems.some((item) => item.id === preferredId)
+    ? preferredId
+    : getDefaultSelectedId(state.currentDay);
+
+  renderDayTabs();
+  renderCurrentDay({ fitBounds });
+}
+
 function normalizeItems(items) {
   return items.map((item, index) => {
     const parsed = parseCoords(item.coords, item.lat, item.lng);
@@ -183,9 +182,7 @@ function normalizeItems(items) {
 function parseCoords(coords, latRaw, lngRaw) {
   if (typeof coords === "string" && coords.includes(",")) {
     const [latStr, lngStr] = coords.split(",").map((v) => v.trim());
-    const lat = parseFloat(latStr);
-    const lng = parseFloat(lngStr);
-    return { lat, lng };
+    return { lat: parseFloat(latStr), lng: parseFloat(lngStr) };
   }
   return { lat: parseFloat(latRaw), lng: parseFloat(lngRaw) };
 }
@@ -200,6 +197,7 @@ function inferCategory(item) {
 }
 
 function buildGoogleMapsUrl(item, parsed) {
+  if (item.google_maps_url) return item.google_maps_url;
   if (Number.isFinite(parsed.lat) && Number.isFinite(parsed.lng)) {
     return `https://www.google.com/maps/search/?api=1&query=${parsed.lat},${parsed.lng}`;
   }
@@ -219,7 +217,7 @@ function sortDays(days) {
 }
 
 function extractDayNumber(day) {
-  const match = String(day).match(/(\d+)/);
+  const match = String(day || "").match(/day(\d+)/i);
   return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
 }
 
@@ -291,6 +289,8 @@ function renderList(items) {
     const cardNote = fragment.querySelector(".card-note");
     const focusBtn = fragment.querySelector(".focus-btn");
     const mapsBtn = fragment.querySelector(".maps-btn");
+    const editBtn = fragment.querySelector(".edit-btn");
+    const deleteBtn = fragment.querySelector(".delete-btn");
     const media = fragment.querySelector(".card-media");
     const img = fragment.querySelector(".card-image");
 
@@ -329,7 +329,6 @@ function renderList(items) {
       card.classList.add("has-image");
     } else {
       media.hidden = true;
-      img.removeAttribute("src");
       card.classList.remove("has-image");
     }
 
@@ -348,6 +347,14 @@ function renderList(items) {
     focusBtn.addEventListener("click", (event) => {
       event.stopPropagation();
       selectItem(item.id, { panTo: true, zoom: 15 });
+    });
+    editBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openItemModal("edit", item);
+    });
+    deleteBtn.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await handleDelete(item);
     });
 
     itineraryListEl.appendChild(fragment);
@@ -463,22 +470,77 @@ function renderLoadError(error) {
   itineraryListEl.innerHTML = `<div class="empty-state-card">${escapeHtml(error.message || String(error))}</div>`;
 }
 
-async function handleAddSubmit(event) {
+function openItemModal(mode = "add", item = null) {
+  if (!itemModalEl || !itemFormEl) return;
+  clearFormMessage();
+  itemFormEl.reset();
+  itemFormEl.elements.mode.value = mode;
+  itemFormEl.elements.id.value = item?.id || "";
+
+  if (mode === "edit" && item) {
+    formKickerEl.textContent = "編輯旅遊地點";
+    formTitleEl.textContent = "直接更新 Google Sheets";
+    submitItemBtn.textContent = "更新這筆行程";
+    fillFormWithItem(item);
+  } else {
+    formKickerEl.textContent = "新增旅遊地點";
+    formTitleEl.textContent = "直接寫入 Google Sheets";
+    submitItemBtn.textContent = "新增到 Google Sheets";
+    presetFormDefaults();
+  }
+
+  itemModalEl.showModal();
+}
+
+function fillFormWithItem(item) {
+  itemFormEl.elements.date.value = item.date || "";
+  itemFormEl.elements.day.value = item.day || "";
+  itemFormEl.elements.order.value = String(item.order || "");
+  itemFormEl.elements.place_name.value = item.place_name || "";
+  itemFormEl.elements.address.value = item.address || "";
+  itemFormEl.elements.coords.value = item.coords || formatCoords(item.lat, item.lng);
+  itemFormEl.elements.start_time.value = item.start_time || "";
+  itemFormEl.elements.end_time.value = item.end_time || "";
+  itemFormEl.elements.note.value = item.note || "";
+  itemFormEl.elements.category.value = item.category || "";
+  itemFormEl.elements.google_maps_url.value = item.google_maps_url || "";
+  itemFormEl.elements.image_url.value = item.image_url || "";
+  itemFormEl.elements.status.value = item.status || "planned";
+}
+
+function presetFormDefaults() {
+  const today = state.currentDay || "day1";
+  const items = getItemsForDay(today);
+  const nextOrder = (items.reduce((max, item) => Math.max(max, Number(item.order) || 0), 0) || 0) + 1;
+  const firstItemDate = items[0]?.date || formatDateInput(new Date());
+  itemFormEl.elements.day.value = today;
+  itemFormEl.elements.order.value = String(nextOrder);
+  itemFormEl.elements.date.value = firstItemDate;
+  itemFormEl.elements.status.value = "planned";
+}
+
+function closeItemModal() {
+  itemModalEl?.close();
+}
+
+async function handleItemSubmit(event) {
   event.preventDefault();
   clearFormMessage();
-  const formData = new FormData(addFormEl);
-  const payload = Object.fromEntries(formData.entries());
 
-  const validationError = validateFormPayload(payload);
+  const formData = new FormData(itemFormEl);
+  const payload = Object.fromEntries(formData.entries());
+  const mode = payload.mode === "edit" ? "edit" : "add";
+  const validationError = validateFormPayload(payload, mode);
   if (validationError) {
     showFormMessage(validationError, "error");
     return;
   }
 
-  submitAddBtn.disabled = true;
-  showFormMessage("正在送出到 Google Sheets…", "info");
-
-  const cleanItem = {
+  const action = mode === "edit" ? "update_item" : "add_item";
+  const params = {
+    action,
+    admin_key: payload.admin_key.trim(),
+    id: payload.id || "",
     date: payload.date.trim(),
     day: payload.day.trim(),
     order: String(payload.order).trim(),
@@ -494,60 +556,56 @@ async function handleAddSubmit(event) {
     status: payload.status.trim() || "planned",
   };
 
-  const requestPayload = {
-    action: "add_item",
-    admin_key: payload.admin_key,
-    item: cleanItem,
-  };
+  submitItemBtn.disabled = true;
+  showFormMessage(mode === "edit" ? "正在更新 Google Sheets…" : "正在新增到 Google Sheets…", "info");
 
   try {
-    const payload = await requestJsonp({
-      action: "add_item",
-      admin_key: requestPayload.admin_key,
-      date: cleanItem.date,
-      day: cleanItem.day,
-      order: cleanItem.order,
-      place_name: cleanItem.place_name,
-      address: cleanItem.address,
-      coords: cleanItem.coords,
-      start_time: cleanItem.start_time,
-      end_time: cleanItem.end_time,
-      note: cleanItem.note,
-      category: cleanItem.category,
-      google_maps_url: cleanItem.google_maps_url,
-      image_url: cleanItem.image_url,
-      status: cleanItem.status,
-    }, { timeout: 15000 });
-
-    if (!payload || payload.ok !== true) {
-      throw new Error(payload?.message || "新增失敗，請稍後再試。");
+    const result = await requestJsonp(params, { includeEmpty: true, timeout: 15000 });
+    if (!result || result.ok !== true) {
+      throw new Error(result?.message || "無法完成請求");
     }
 
-    showFormMessage(payload.message || "已新增到 Google Sheets。", "success");
-
-    await refreshDataAfterAdd(cleanItem.day);
-    submitAddBtn.disabled = false;
-    addFormEl.reset();
-    setTimeout(() => closeAddModal(), 700);
+    showFormMessage(result.message || (mode === "edit" ? "已更新。" : "已新增。"), "success");
+    const preferredDay = params.day;
+    const preferredId = mode === "edit" ? params.id : null;
+    await reloadFromRemote(preferredDay, preferredId, true);
+    setTimeout(() => {
+      submitItemBtn.disabled = false;
+      closeItemModal();
+    }, 300);
   } catch (error) {
     console.error(error);
-    showFormMessage(error.message || "送出失敗，請檢查 Apps Script 權限設定。", "error");
-    submitAddBtn.disabled = false;
+    showFormMessage(error.message || String(error), "error");
+    submitItemBtn.disabled = false;
   }
 }
 
-async function refreshDataAfterAdd(preferredDay) {
-  const remoteItems = await loadRemoteSheetData();
-  state.allItems = normalizeItems(remoteItems);
-  state.groupedItems = groupItemsByDay(state.allItems);
-  state.orderedDays = sortDays(Object.keys(state.groupedItems));
-  state.currentDay = state.groupedItems[preferredDay] ? preferredDay : state.orderedDays[0] || null;
-  state.selectedId = getDefaultSelectedId(state.currentDay);
-  renderDayTabs();
-  renderCurrentDay({ fitBounds: true });
+async function handleDelete(item) {
+  const adminKey = window.prompt(`刪除「${item.place_name || '未命名地點'}」\n請輸入管理密碼：`);
+  if (adminKey === null) return;
+  if (!adminKey.trim()) {
+    window.alert("未輸入管理密碼。", "error");
+    return;
+  }
+  if (!window.confirm(`確定要刪除「${item.place_name || '未命名地點'}」嗎？`)) return;
+
+  try {
+    const result = await requestJsonp(
+      { action: "delete_item", admin_key: adminKey.trim(), id: item.id },
+      { includeEmpty: true, timeout: 15000 }
+    );
+    if (!result || result.ok !== true) {
+      throw new Error(result?.message || "刪除失敗");
+    }
+    const currentItems = getItemsForDay(state.currentDay);
+    const fallbackId = currentItems.find((x) => x.id !== item.id)?.id || null;
+    await reloadFromRemote(state.currentDay, fallbackId, true);
+  } catch (error) {
+    window.alert(error.message || String(error));
+  }
 }
 
-function validateFormPayload(payload) {
+function validateFormPayload(payload, mode) {
   if (!payload.date) return "請填日期。";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(payload.date.trim())) return "日期格式需為 YYYY-MM-DD。";
   if (!payload.day || !/^day\d+$/i.test(payload.day.trim())) return "day 欄請填像 day1、day2。";
@@ -559,18 +617,97 @@ function validateFormPayload(payload) {
   if (payload.google_maps_url && !/^https?:\/\//i.test(payload.google_maps_url.trim())) return "Google Maps 連結必須是 http 或 https 開頭。";
   if (payload.image_url && !/^https?:\/\//i.test(payload.image_url.trim())) return "圖片網址必須是 http 或 https 開頭。";
   if (!payload.admin_key || !payload.admin_key.trim()) return "請輸入管理密碼。";
+  if (mode === "edit" && !payload.id) return "找不到這筆資料的 id。";
   return "";
 }
 
 function showFormMessage(message, type = "info") {
-  addFormMessageEl.textContent = message;
-  addFormMessageEl.className = `form-message ${type}`;
-  addFormMessageEl.classList.remove("is-hidden");
+  itemFormMessageEl.textContent = message;
+  itemFormMessageEl.className = `form-message ${type}`;
+  itemFormMessageEl.classList.remove("is-hidden");
 }
 
 function clearFormMessage() {
-  addFormMessageEl.textContent = "";
-  addFormMessageEl.className = "form-message is-hidden";
+  itemFormMessageEl.textContent = "";
+  itemFormMessageEl.className = "form-message is-hidden";
+}
+
+function toggleUserLocationWatch() {
+  if (!navigator.geolocation) {
+    window.alert("這個裝置不支援定位功能。");
+    return;
+  }
+
+  if (state.watchId != null) {
+    navigator.geolocation.clearWatch(state.watchId);
+    state.watchId = null;
+    if (state.userMarker) {
+      state.map.removeLayer(state.userMarker);
+      state.userMarker = null;
+    }
+    if (state.userCircle) {
+      state.map.removeLayer(state.userCircle);
+      state.userCircle = null;
+    }
+    geoBtn.textContent = "我的位置";
+    geoBtn.classList.remove("is-active");
+    return;
+  }
+
+  geoBtn.textContent = "定位中…";
+  geoBtn.classList.add("is-active");
+
+  state.watchId = navigator.geolocation.watchPosition(
+    (position) => {
+      const lat = position.coords.latitude;
+      const lng = position.coords.longitude;
+      const accuracy = position.coords.accuracy || 0;
+      updateUserLocation(lat, lng, accuracy);
+      geoBtn.textContent = "停止定位";
+    },
+    (error) => {
+      console.error(error);
+      window.alert("無法取得目前位置，請檢查瀏覽器定位權限。");
+      if (state.watchId != null) navigator.geolocation.clearWatch(state.watchId);
+      state.watchId = null;
+      geoBtn.textContent = "我的位置";
+      geoBtn.classList.remove("is-active");
+    },
+    {
+      enableHighAccuracy: true,
+      maximumAge: 5000,
+      timeout: 10000,
+    }
+  );
+}
+
+function updateUserLocation(lat, lng, accuracy) {
+  if (!state.userMarker) {
+    state.userMarker = L.circleMarker([lat, lng], {
+      radius: 7,
+      color: "#0ea5e9",
+      weight: 3,
+      fillColor: "#ffffff",
+      fillOpacity: 1,
+    }).addTo(state.map);
+  } else {
+    state.userMarker.setLatLng([lat, lng]);
+  }
+
+  if (!state.userCircle) {
+    state.userCircle = L.circle([lat, lng], {
+      radius: accuracy,
+      color: "#38bdf8",
+      weight: 1,
+      fillColor: "#38bdf8",
+      fillOpacity: 0.12,
+    }).addTo(state.map);
+  } else {
+    state.userCircle.setLatLng([lat, lng]);
+    state.userCircle.setRadius(accuracy);
+  }
+
+  state.map.flyTo([lat, lng], Math.max(state.map.getZoom(), 14), { duration: 0.6 });
 }
 
 function formatTimeRange(start, end) {
@@ -582,8 +719,12 @@ function formatTimeRange(start, end) {
 
 function formatCategory(category) {
   const value = String(category || "").trim();
-  if (!value) return "待確認";
-  return value;
+  return value || "待確認";
+}
+
+function formatCoords(lat, lng) {
+  if (Number.isFinite(lat) && Number.isFinite(lng)) return `${lat}, ${lng}`;
+  return "";
 }
 
 function getDayColor(day) {

@@ -29,6 +29,7 @@
 
       <div class="floating-actions">
         <button id="fit-day-btn" class="floating-btn" type="button">顯示當天全部</button>
+        <button id="geo-btn" class="floating-btn secondary" type="button">我的位置</button>
       </div>
     </section>
 
@@ -68,6 +69,10 @@
           <button type="button" class="mini-action focus-btn">定位</button>
           <a class="mini-action maps-btn" target="_blank" rel="noreferrer noopener">Google Maps</a>
         </div>
+        <div class="card-admin-actions">
+          <button type="button" class="mini-sub-action edit-btn">編輯</button>
+          <button type="button" class="mini-sub-action delete-btn danger">刪除</button>
+        </div>
       </div>
       <div class="card-media" hidden>
         <img class="card-image" alt="" loading="lazy" decoding="async" />
@@ -75,17 +80,20 @@
     </article>
   </template>
 
-  <dialog id="add-modal" class="add-modal">
-    <form id="add-form" class="add-form" method="dialog" novalidate>
+  <dialog id="item-modal" class="add-modal">
+    <form id="item-form" class="add-form" method="dialog" novalidate>
+      <input type="hidden" name="mode" value="add" />
+      <input type="hidden" name="id" value="" />
+
       <div class="add-form-head">
         <div>
-          <p class="add-form-kicker">新增旅遊地點</p>
-          <h3>直接寫入 Google Sheets</h3>
+          <p id="form-kicker" class="add-form-kicker">新增旅遊地點</p>
+          <h3 id="form-title">直接寫入 Google Sheets</h3>
         </div>
-        <button id="close-add-modal-btn" type="button" class="icon-btn" aria-label="關閉">✕</button>
+        <button id="close-item-modal-btn" type="button" class="icon-btn" aria-label="關閉">✕</button>
       </div>
 
-      <div id="add-form-message" class="form-message is-hidden"></div>
+      <div id="item-form-message" class="form-message is-hidden"></div>
 
       <div class="form-grid">
         <label>
@@ -122,7 +130,7 @@
         </label>
         <label class="span-2">
           <span>coords</span>
-          <input name="coords" type="text" placeholder="25.104493673968665, 121.45549914778823" />
+          <input name="coords" type="text" placeholder="26.2124, 127.6809" />
         </label>
         <label class="span-2">
           <span>Google Maps 連結</span>
@@ -147,14 +155,14 @@
       </div>
 
       <ul class="form-tips">
-        <li>至少填：日期、day、順序、地點名稱。</li>
-        <li>coords 建議直接貼 Google Maps 複製出的「緯度, 經度」。</li>
-        <li>圖片欄請貼可直接打開的圖片網址。</li>
+        <li>貼上 Google Maps 連結時，這版只會先存入 <code>google_maps_url</code>。</li>
+        <li>地點名稱、coords、圖片網址仍請手動填寫。</li>
+        <li>刪除 / 編輯同樣需要管理密碼。</li>
       </ul>
 
       <div class="add-form-actions">
-        <button type="button" id="cancel-add-btn" class="secondary-btn">取消</button>
-        <button type="submit" id="submit-add-btn" class="primary-btn">新增到 Google Sheets</button>
+        <button type="button" id="cancel-item-btn" class="secondary-btn">取消</button>
+        <button type="submit" id="submit-item-btn" class="primary-btn">新增到 Google Sheets</button>
       </div>
     </form>
   </dialog>
