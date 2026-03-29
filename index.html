@@ -29,7 +29,6 @@
 
       <div class="floating-actions">
         <button id="fit-day-btn" class="floating-btn" type="button">顯示當天全部</button>
-        <button id="geo-btn" class="floating-btn secondary" type="button">我的位置</button>
       </div>
     </section>
 
@@ -44,7 +43,10 @@
             <div>
               <h2 id="current-day-title">Day 1 行程</h2>
             </div>
-            <button id="open-add-modal-btn" class="add-plan-btn" type="button">新增行程</button>
+            <div class="section-head-actions">
+              <button id="toggle-edit-mode-btn" class="add-plan-btn secondary" type="button" aria-pressed="false">編輯</button>
+              <button id="open-add-modal-btn" class="add-plan-btn" type="button">新增行程</button>
+            </div>
           </div>
 
           <div id="itinerary-list" class="itinerary-list"></div>

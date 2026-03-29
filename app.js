@@ -12,9 +12,7 @@ const state = {
   markersLayer: null,
   routeLayer: null,
   markerMap: new Map(),
-  userMarker: null,
-  userCircle: null,
-  watchId: null,
+  isEditMode: false,
 };
 
 const defaultCenter = [26.2124, 127.6809];
@@ -26,12 +24,12 @@ const currentDayTitleEl = document.getElementById("current-day-title");
 const heroDateEl = document.getElementById("hero-date");
 const heroTitleEl = document.getElementById("hero-title");
 const fitDayBtn = document.getElementById("fit-day-btn");
-const geoBtn = document.getElementById("geo-btn");
 const cardTemplate = document.getElementById("itinerary-card-template");
 const itemModalEl = document.getElementById("item-modal");
 const itemFormEl = document.getElementById("item-form");
 const itemFormMessageEl = document.getElementById("item-form-message");
 const openAddModalBtn = document.getElementById("open-add-modal-btn");
+const toggleEditModeBtn = document.getElementById("toggle-edit-mode-btn");
 const closeItemModalBtn = document.getElementById("close-item-modal-btn");
 const cancelItemBtn = document.getElementById("cancel-item-btn");
 const submitItemBtn = document.getElementById("submit-item-btn");
@@ -65,10 +63,10 @@ function initMap() {
 
 function bindEvents() {
   fitDayBtn?.addEventListener("click", () => fitCurrentDayBounds({ animate: true }));
-  geoBtn?.addEventListener("click", toggleUserLocationWatch);
   window.addEventListener("resize", () => state.map?.invalidateSize());
 
   openAddModalBtn?.addEventListener("click", () => openItemModal("add"));
+  toggleEditModeBtn?.addEventListener("click", toggleEditMode);
   closeItemModalBtn?.addEventListener("click", closeItemModal);
   cancelItemBtn?.addEventListener("click", closeItemModal);
   itemFormEl?.addEventListener("submit", handleItemSubmit);
@@ -263,6 +261,7 @@ function renderCurrentDay({ fitBounds = false } = {}) {
   currentDayTitleEl.textContent = `Day ${dayNumber} 行程`;
   heroDateEl.textContent = items[0]?.date || "";
   heroTitleEl.textContent = `Day ${dayNumber}`;
+  syncEditModeUi();
   renderList(items);
   renderMap(items, { fitBounds });
 }
@@ -296,6 +295,7 @@ function renderList(items) {
 
     card.dataset.id = item.id;
     if (item.id === state.selectedId) card.classList.add("active");
+    if (state.isEditMode) card.classList.add("is-editing");
     cardOrder.textContent = item.order;
     cardTime.textContent = formatTimeRange(item.start_time, item.end_time) || "未排時間";
     cardCategory.textContent = formatCategory(item.category);
@@ -348,6 +348,9 @@ function renderList(items) {
       event.stopPropagation();
       selectItem(item.id, { panTo: true, zoom: 15 });
     });
+    editBtn.textContent = "編輯這筆";
+    deleteBtn.textContent = "刪除";
+
     editBtn.addEventListener("click", (event) => {
       event.stopPropagation();
       openItemModal("edit", item);
@@ -359,6 +362,20 @@ function renderList(items) {
 
     itineraryListEl.appendChild(fragment);
   });
+}
+
+
+function syncEditModeUi() {
+  if (!toggleEditModeBtn) return;
+  toggleEditModeBtn.classList.toggle("is-active", state.isEditMode);
+  toggleEditModeBtn.setAttribute("aria-pressed", state.isEditMode ? "true" : "false");
+  toggleEditModeBtn.textContent = state.isEditMode ? "完成" : "編輯";
+}
+
+function toggleEditMode() {
+  state.isEditMode = !state.isEditMode;
+  syncEditModeUi();
+  renderList(getItemsForDay(state.currentDay));
 }
 
 function renderMap(items, { fitBounds = false } = {}) {
@@ -630,84 +647,6 @@ function showFormMessage(message, type = "info") {
 function clearFormMessage() {
   itemFormMessageEl.textContent = "";
   itemFormMessageEl.className = "form-message is-hidden";
-}
-
-function toggleUserLocationWatch() {
-  if (!navigator.geolocation) {
-    window.alert("這個裝置不支援定位功能。");
-    return;
-  }
-
-  if (state.watchId != null) {
-    navigator.geolocation.clearWatch(state.watchId);
-    state.watchId = null;
-    if (state.userMarker) {
-      state.map.removeLayer(state.userMarker);
-      state.userMarker = null;
-    }
-    if (state.userCircle) {
-      state.map.removeLayer(state.userCircle);
-      state.userCircle = null;
-    }
-    geoBtn.textContent = "我的位置";
-    geoBtn.classList.remove("is-active");
-    return;
-  }
-
-  geoBtn.textContent = "定位中…";
-  geoBtn.classList.add("is-active");
-
-  state.watchId = navigator.geolocation.watchPosition(
-    (position) => {
-      const lat = position.coords.latitude;
-      const lng = position.coords.longitude;
-      const accuracy = position.coords.accuracy || 0;
-      updateUserLocation(lat, lng, accuracy);
-      geoBtn.textContent = "停止定位";
-    },
-    (error) => {
-      console.error(error);
-      window.alert("無法取得目前位置，請檢查瀏覽器定位權限。");
-      if (state.watchId != null) navigator.geolocation.clearWatch(state.watchId);
-      state.watchId = null;
-      geoBtn.textContent = "我的位置";
-      geoBtn.classList.remove("is-active");
-    },
-    {
-      enableHighAccuracy: true,
-      maximumAge: 5000,
-      timeout: 10000,
-    }
-  );
-}
-
-function updateUserLocation(lat, lng, accuracy) {
-  if (!state.userMarker) {
-    state.userMarker = L.circleMarker([lat, lng], {
-      radius: 7,
-      color: "#0ea5e9",
-      weight: 3,
-      fillColor: "#ffffff",
-      fillOpacity: 1,
-    }).addTo(state.map);
-  } else {
-    state.userMarker.setLatLng([lat, lng]);
-  }
-
-  if (!state.userCircle) {
-    state.userCircle = L.circle([lat, lng], {
-      radius: accuracy,
-      color: "#38bdf8",
-      weight: 1,
-      fillColor: "#38bdf8",
-      fillOpacity: 0.12,
-    }).addTo(state.map);
-  } else {
-    state.userCircle.setLatLng([lat, lng]);
-    state.userCircle.setRadius(accuracy);
-  }
-
-  state.map.flyTo([lat, lng], Math.max(state.map.getZoom(), 14), { duration: 0.6 });
 }
 
 function formatTimeRange(start, end) {
