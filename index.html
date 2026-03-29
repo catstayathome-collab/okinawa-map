@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>沖繩行程地圖</title>
-  <meta name="description" content="沖繩旅遊行程地圖：Day 切換、列表同步、編號 marker、路線連線、毛玻璃卡片、Google Sheets 同步。" />
+  <meta name="description" content="沖繩旅遊行程地圖：Day 切換、列表同步、編號 marker、路線連線、底部抽屜與手機版介面。" />
   <link rel="preconnect" href="https://unpkg.com" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
     integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
@@ -17,35 +17,41 @@
       <div class="map-shade"></div>
 
       <header class="hero-overlay">
-        <nav class="top-tabs-wrap" aria-label="行程天數切換">
-          <div id="day-tabs" class="day-tabs"></div>
-        </nav>
+        <div class="hero-topline hero-topline-stack">
+          <nav class="hero-day-tabs-wrap" aria-label="行程天數切換">
+            <div id="day-tabs" class="day-tabs day-tabs-top"></div>
+          </nav>
+        </div>
 
         <div class="hero-copy">
           <p id="hero-date" class="hero-date"></p>
-          <h1 id="hero-title" class="hero-title">沖繩行程地圖</h1>
+          <h1 id="hero-title">沖繩行程地圖</h1>
+          <p id="hero-summary" class="hero-summary" hidden></p>
         </div>
       </header>
 
       <div class="floating-actions">
-        <button id="fit-day-btn" class="floating-btn" type="button">顯示當天全部</button>
+        <button id="fit-day-btn" class="floating-btn floating-btn-primary" type="button">顯示當天全部</button>
       </div>
+
+      <div id="map-empty-state" class="map-empty-state is-hidden"></div>
     </section>
 
-    <section class="bottom-sheet" aria-label="當日行程">
-      <div class="sheet-handle-area" aria-hidden="true">
+    <section id="bottom-sheet" class="bottom-sheet" aria-label="當日行程抽屜">
+      <div id="sheet-handle-area" class="sheet-handle-area" aria-hidden="true">
         <span class="sheet-handle"></span>
       </div>
 
       <div class="sheet-content">
-        <section class="list-section">
-          <div class="section-head">
+        <section class="list-section list-section-minimal">
+          <div class="section-head section-head-minimal">
             <div>
               <h2 id="current-day-title">Day 1 行程</h2>
+              <p id="current-day-meta" class="section-subtitle" hidden></p>
             </div>
             <div class="section-head-actions">
-              <button id="toggle-edit-mode-btn" class="add-plan-btn secondary" type="button" aria-pressed="false">編輯</button>
-              <button id="open-add-modal-btn" class="add-plan-btn" type="button">新增行程</button>
+              <button id="toggle-edit-mode-btn" class="control-pill control-pill-secondary" type="button" aria-pressed="false">編輯</button>
+              <button id="open-add-modal-btn" class="control-pill" type="button">新增行程</button>
             </div>
           </div>
 
@@ -71,10 +77,6 @@
           <button type="button" class="mini-action focus-btn">定位</button>
           <a class="mini-action maps-btn" target="_blank" rel="noreferrer noopener">Google Maps</a>
         </div>
-        <div class="card-admin-actions">
-          <button type="button" class="mini-sub-action edit-btn">編輯</button>
-          <button type="button" class="mini-sub-action delete-btn danger">刪除</button>
-        </div>
       </div>
       <div class="card-media" hidden>
         <img class="card-image" alt="" loading="lazy" decoding="async" />
@@ -82,14 +84,14 @@
     </article>
   </template>
 
-  <dialog id="item-modal" class="add-modal">
-    <form id="item-form" class="add-form" method="dialog" novalidate>
+  <dialog id="item-modal" class="item-modal">
+    <form id="item-form" class="item-form" method="dialog" novalidate>
       <input type="hidden" name="mode" value="add" />
       <input type="hidden" name="id" value="" />
 
-      <div class="add-form-head">
+      <div class="item-form-head">
         <div>
-          <p id="form-kicker" class="add-form-kicker">新增旅遊地點</p>
+          <p id="form-kicker" class="item-form-kicker">新增旅遊地點</p>
           <h3 id="form-title">直接寫入 Google Sheets</h3>
         </div>
         <button id="close-item-modal-btn" type="button" class="icon-btn" aria-label="關閉">✕</button>
@@ -131,8 +133,8 @@
           <input name="address" type="text" placeholder="可留空，或填店家/景點地址" />
         </label>
         <label class="span-2">
-          <span>coords</span>
-          <input name="coords" type="text" placeholder="26.2124, 127.6809" />
+          <span>coords *</span>
+          <input name="coords" type="text" placeholder="26.2124, 127.6809" required />
         </label>
         <label class="span-2">
           <span>Google Maps 連結</span>
@@ -152,17 +154,17 @@
         </label>
         <label>
           <span>管理密碼 *</span>
-          <input name="admin_key" type="password" placeholder="你自己設定的管理密碼" required />
+          <input name="admin_key" type="password" placeholder="你設定的 ADMIN_KEY" required />
         </label>
       </div>
 
       <ul class="form-tips">
-        <li>貼上 Google Maps 連結時，這版只會先存入 <code>google_maps_url</code>。</li>
-        <li>地點名稱、coords、圖片網址仍請手動填寫。</li>
-        <li>刪除 / 編輯同樣需要管理密碼。</li>
+        <li>目前免費版只會先存入 <code>google_maps_url</code>。</li>
+        <li>地點名稱、coords、圖片網址仍需手動填寫。</li>
+        <li>編輯與刪除同樣需要管理密碼。</li>
       </ul>
 
-      <div class="add-form-actions">
+      <div class="item-form-actions">
         <button type="button" id="cancel-item-btn" class="secondary-btn">取消</button>
         <button type="submit" id="submit-item-btn" class="primary-btn">新增到 Google Sheets</button>
       </div>

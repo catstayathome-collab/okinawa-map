@@ -12,24 +12,28 @@ const state = {
   markersLayer: null,
   routeLayer: null,
   markerMap: new Map(),
+  sheetVh: 54,
   isEditMode: false,
 };
 
 const defaultCenter = [26.2124, 127.6809];
-
 const mapEl = document.getElementById("map");
 const dayTabsEl = document.getElementById("day-tabs");
 const itineraryListEl = document.getElementById("itinerary-list");
 const currentDayTitleEl = document.getElementById("current-day-title");
+const currentDayMetaEl = document.getElementById("current-day-meta");
 const heroDateEl = document.getElementById("hero-date");
 const heroTitleEl = document.getElementById("hero-title");
+const heroSummaryEl = document.getElementById("hero-summary");
 const fitDayBtn = document.getElementById("fit-day-btn");
+const mapEmptyStateEl = document.getElementById("map-empty-state");
+const sheetHandleArea = document.getElementById("sheet-handle-area");
 const cardTemplate = document.getElementById("itinerary-card-template");
+const openAddModalBtn = document.getElementById("open-add-modal-btn");
+const toggleEditModeBtn = document.getElementById("toggle-edit-mode-btn");
 const itemModalEl = document.getElementById("item-modal");
 const itemFormEl = document.getElementById("item-form");
 const itemFormMessageEl = document.getElementById("item-form-message");
-const openAddModalBtn = document.getElementById("open-add-modal-btn");
-const toggleEditModeBtn = document.getElementById("toggle-edit-mode-btn");
 const closeItemModalBtn = document.getElementById("close-item-modal-btn");
 const cancelItemBtn = document.getElementById("cancel-item-btn");
 const submitItemBtn = document.getElementById("submit-item-btn");
@@ -41,6 +45,7 @@ bootstrap();
 async function bootstrap() {
   initMap();
   bindEvents();
+  setupBottomSheet();
 
   try {
     await reloadFromRemote();
@@ -51,11 +56,16 @@ async function bootstrap() {
 }
 
 function initMap() {
-  state.map = L.map(mapEl, { zoomControl: false, preferCanvas: true }).setView(defaultCenter, 10);
+  state.map = L.map(mapEl, {
+    zoomControl: false,
+    preferCanvas: true,
+  }).setView(defaultCenter, 12);
+
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   }).addTo(state.map);
+
   L.control.zoom({ position: "bottomright" }).addTo(state.map);
   state.markersLayer = L.layerGroup().addTo(state.map);
   state.routeLayer = L.layerGroup().addTo(state.map);
@@ -114,7 +124,7 @@ function requestJsonp(params = {}, { timeout = 12000, includeEmpty = false } = {
 }
 
 async function loadRemoteSheetData() {
-  const payload = await requestJsonp();
+  const payload = await requestJsonp({}, { timeout: 12000 });
   if (!payload || payload.ok !== true || !Array.isArray(payload.items)) {
     throw new Error(payload?.message || "Google Sheets 回傳格式不正確");
   }
@@ -122,26 +132,21 @@ async function loadRemoteSheetData() {
 }
 
 async function reloadFromRemote(preferredDay = null, preferredId = null, fitBounds = false) {
-  const remoteItems = await loadRemoteSheetData();
-  state.allItems = normalizeItems(remoteItems);
+  const items = await loadRemoteSheetData();
+  state.allItems = normalizeItems(items);
   state.groupedItems = groupItemsByDay(state.allItems);
   state.orderedDays = sortDays(Object.keys(state.groupedItems));
 
   if (!state.orderedDays.length) {
-    state.currentDay = null;
-    state.selectedId = null;
     renderNoData();
     return;
   }
 
-  state.currentDay = preferredDay && state.groupedItems[preferredDay]
-    ? preferredDay
-    : state.currentDay && state.groupedItems[state.currentDay]
-      ? state.currentDay
-      : state.orderedDays[0];
+  const nextDay = preferredDay && state.groupedItems[preferredDay] ? preferredDay : state.currentDay;
+  state.currentDay = nextDay && state.groupedItems[nextDay] ? nextDay : state.orderedDays[0];
 
-  const currentItems = getItemsForDay(state.currentDay);
-  state.selectedId = preferredId && currentItems.some((item) => item.id === preferredId)
+  const itemsForDay = getCurrentItems();
+  state.selectedId = preferredId && itemsForDay.some((item) => item.id === preferredId)
     ? preferredId
     : getDefaultSelectedId(state.currentDay);
 
@@ -159,7 +164,7 @@ function normalizeItems(items) {
       order: Number(item.order) || index + 1,
       place_name: item.place_name || "",
       address: item.address || "",
-      coords: item.coords || "",
+      coords: item.coords || formatCoords(parsed.lat, parsed.lng),
       lat: parsed.lat,
       lng: parsed.lng,
       start_time: item.start_time || "",
@@ -219,151 +224,359 @@ function extractDayNumber(day) {
   return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
 }
 
-function getItemsForDay(day) {
-  return state.groupedItems[day] || [];
+function getCurrentItems() {
+  return state.groupedItems[state.currentDay] || [];
+}
+
+function getSelectedItem() {
+  return getCurrentItems().find((item) => item.id === state.selectedId) || null;
 }
 
 function getDefaultSelectedId(day) {
-  const items = getItemsForDay(day);
+  const items = state.groupedItems[day] || [];
   const firstMapped = items.find((item) => item.hasCoordinates);
   return firstMapped?.id || items[0]?.id || null;
 }
 
+function getDayColor(dayKey) {
+  const index = Math.max(0, extractDayNumber(dayKey) - 1) % DAY_COLORS.length;
+  return DAY_COLORS[index];
+}
+
 function renderDayTabs() {
   dayTabsEl.innerHTML = "";
-  state.orderedDays.forEach((day) => {
-    const items = getItemsForDay(day);
+  const count = state.orderedDays.length;
+  dayTabsEl.classList.toggle("is-scroll", count > 3);
+
+  state.orderedDays.forEach((dayKey) => {
+    const items = state.groupedItems[dayKey] || [];
     const mappedCount = items.filter((item) => item.hasCoordinates).length;
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `day-tab${day === state.currentDay ? " active" : ""}`;
+    button.className = `day-tab ${dayKey === state.currentDay ? "active" : ""}`;
+
+    if (count <= 3) {
+      const gap = 8;
+      button.style.flex = `0 0 calc((100% - ${(count - 1) * gap}px) / ${count})`;
+      button.style.maxWidth = "none";
+      button.style.minWidth = "0";
+    } else {
+      button.style.flex = "0 0 132px";
+      button.style.maxWidth = "132px";
+    }
+
     button.innerHTML = `
-      <span class="day-tab-label">Day ${extractDayNumber(day)}</span>
+      <span class="day-tab-label">Day ${extractDayNumber(dayKey)}</span>
       <span class="day-tab-meta">
-        <span>${escapeHtml(items[0]?.date || "—")}</span>
-        <span>・</span>
-        <span>${mappedCount}/${items.length}</span>
+        <span class="day-tab-date">${escapeHtml(items[0]?.date || "")}</span>
+        <span class="day-tab-divider">・</span>
+        <span class="day-tab-ratio">${mappedCount}/${items.length}</span>
       </span>
     `;
+
     button.addEventListener("click", () => {
-      state.currentDay = day;
-      state.selectedId = getDefaultSelectedId(day);
+      if (state.currentDay === dayKey) return;
+      state.currentDay = dayKey;
+      state.selectedId = getDefaultSelectedId(dayKey);
       renderDayTabs();
       renderCurrentDay({ fitBounds: true });
+      closeAnyOpenPopup();
     });
+
     dayTabsEl.appendChild(button);
   });
+
+  const activeBtn = dayTabsEl.querySelector(".day-tab.active");
+  activeBtn?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
 }
 
 function renderCurrentDay({ fitBounds = false } = {}) {
-  const items = getItemsForDay(state.currentDay);
-  const dayNumber = extractDayNumber(state.currentDay);
-  currentDayTitleEl.textContent = `Day ${dayNumber} 行程`;
-  heroDateEl.textContent = items[0]?.date || "";
-  heroTitleEl.textContent = `Day ${dayNumber}`;
+  const items = getCurrentItems();
+  if (!items.length) return;
+
+  const selected = getSelectedItem() || items[0];
+  if (!state.selectedId && selected) state.selectedId = selected.id;
+
+  const color = getDayColor(state.currentDay);
+  document.documentElement.style.setProperty("--day-color", color);
+  document.documentElement.style.setProperty("--day-color-soft", hexToRgba(color, 0.14));
+
+  if (currentDayTitleEl) currentDayTitleEl.textContent = `Day ${extractDayNumber(state.currentDay)} 行程`;
+  if (currentDayMetaEl) currentDayMetaEl.textContent = "";
+  if (heroDateEl) heroDateEl.textContent = items[0]?.date || "";
+  if (heroTitleEl) heroTitleEl.textContent = `Day ${extractDayNumber(state.currentDay)}`;
+  if (heroSummaryEl) heroSummaryEl.textContent = "";
+
   syncEditModeUi();
   renderList(items);
   renderMap(items, { fitBounds });
 }
 
+function normalizeCompareText(value) {
+  return String(value || "").replace(/\s+/g, "").trim().toLowerCase();
+}
+
+function getDisplayAddress(item) {
+  const title = item.place_name || "";
+  const address = item.address || "";
+  if (!address) return "";
+  return normalizeCompareText(title) === normalizeCompareText(address) ? "" : address;
+}
+
 function renderList(items) {
   itineraryListEl.innerHTML = "";
+
   if (!items.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state-card";
-    empty.textContent = "這一天目前還沒有行程。";
-    itineraryListEl.appendChild(empty);
+    itineraryListEl.innerHTML = `<div class="empty-state-card">這一天還沒有行程資料。</div>`;
     return;
   }
 
+  const fragment = document.createDocumentFragment();
+
   items.forEach((item) => {
-    const fragment = cardTemplate.content.cloneNode(true);
-    const card = fragment.querySelector(".itinerary-card");
-    const cardOrder = fragment.querySelector(".card-order");
-    const cardTime = fragment.querySelector(".card-time");
-    const cardCategory = fragment.querySelector(".card-category");
-    const cardMapState = fragment.querySelector(".card-map-state");
-    const cardTitle = fragment.querySelector(".card-title");
-    const cardAddress = fragment.querySelector(".card-address");
-    const cardNote = fragment.querySelector(".card-note");
-    const focusBtn = fragment.querySelector(".focus-btn");
-    const mapsBtn = fragment.querySelector(".maps-btn");
-    const editBtn = fragment.querySelector(".edit-btn");
-    const deleteBtn = fragment.querySelector(".delete-btn");
-    const media = fragment.querySelector(".card-media");
-    const img = fragment.querySelector(".card-image");
+    const node = cardTemplate.content.firstElementChild.cloneNode(true);
+    node.dataset.id = item.id;
 
-    card.dataset.id = item.id;
-    if (item.id === state.selectedId) card.classList.add("active");
-    if (state.isEditMode) card.classList.add("is-editing");
-    cardOrder.textContent = item.order;
-    cardTime.textContent = formatTimeRange(item.start_time, item.end_time) || "未排時間";
-    cardCategory.textContent = formatCategory(item.category);
-    cardMapState.textContent = item.hasCoordinates ? "已定位" : "待補座標";
-    if (!item.hasCoordinates) cardMapState.classList.add("muted");
-    cardTitle.textContent = item.place_name || "未命名地點";
+    const orderEl = node.querySelector(".card-order");
+    const timeEl = node.querySelector(".card-time");
+    const categoryEl = node.querySelector(".card-category");
+    const mapStateEl = node.querySelector(".card-map-state");
+    const titleEl = node.querySelector(".card-title");
+    const addressEl = node.querySelector(".card-address");
+    const noteEl = node.querySelector(".card-note");
+    const focusBtn = node.querySelector(".focus-btn");
+    const mapsBtn = node.querySelector(".maps-btn");
+    const mediaEl = node.querySelector(".card-media");
+    const imageEl = node.querySelector(".card-image");
 
-    const sameAddress = normalizeCompareText(item.place_name) && normalizeCompareText(item.place_name) === normalizeCompareText(item.address);
-    if (item.address && !sameAddress) {
-      cardAddress.textContent = item.address;
-      cardAddress.hidden = false;
+    orderEl.textContent = item.order;
+    timeEl.textContent = formatTimeRange(item.start_time, item.end_time) || "時間未定";
+    categoryEl.textContent = formatCategory(item.category);
+    mapStateEl.textContent = item.hasCoordinates ? "已定位" : "待補座標";
+    if (!item.hasCoordinates) mapStateEl.classList.add("muted");
+
+    const title = item.place_name || "未命名地點";
+    const displayAddress = getDisplayAddress(item);
+    titleEl.textContent = title;
+    if (displayAddress) {
+      addressEl.textContent = displayAddress;
+      addressEl.hidden = false;
     } else {
-      cardAddress.hidden = true;
+      addressEl.hidden = true;
+      addressEl.textContent = "";
+    }
+    noteEl.textContent = item.note || "尚未填寫備註";
+
+    const imageUrl = String(item.image_url || "").trim();
+    if (imageUrl) {
+      node.classList.add("has-image");
+      node.classList.remove("no-image");
+      mediaEl.hidden = false;
+      imageEl.src = imageUrl;
+      imageEl.alt = `${title} 圖片`;
+      imageEl.onerror = () => {
+        mediaEl.hidden = true;
+        node.classList.remove("has-image");
+        node.classList.add("no-image");
+        imageEl.removeAttribute("src");
+      };
+    } else {
+      mediaEl.hidden = true;
+      node.classList.remove("has-image");
+      node.classList.add("no-image");
+      imageEl.removeAttribute("src");
+      imageEl.alt = "";
     }
 
-    if (item.note) {
-      cardNote.textContent = item.note;
-      cardNote.hidden = false;
+    if (state.isEditMode) {
+      focusBtn.textContent = "編輯";
+      focusBtn.classList.add("editing");
+      focusBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openItemModal("edit", item);
+      });
+
+      mapsBtn.textContent = "刪除";
+      mapsBtn.classList.add("danger");
+      mapsBtn.removeAttribute("href");
+      mapsBtn.setAttribute("role", "button");
+      mapsBtn.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        await handleDelete(item);
+      });
     } else {
-      cardNote.hidden = true;
+      if (item.hasCoordinates) {
+        focusBtn.textContent = "定位";
+        focusBtn.classList.remove("editing");
+        focusBtn.disabled = false;
+        focusBtn.addEventListener("click", (event) => {
+          event.stopPropagation();
+          focusItem(item.id, { openPopup: true, scrollCard: false, flyTo: true });
+        });
+      } else {
+        focusBtn.textContent = "未定位";
+        focusBtn.disabled = true;
+      }
+
+      mapsBtn.textContent = item.google_maps_url ? "Google Maps" : "無連結";
+      mapsBtn.classList.remove("danger");
+      if (item.google_maps_url) {
+        mapsBtn.href = item.google_maps_url;
+        mapsBtn.removeAttribute("aria-disabled");
+      } else {
+        mapsBtn.removeAttribute("href");
+        mapsBtn.setAttribute("aria-disabled", "true");
+      }
     }
 
-    if (item.image_url) {
-      media.hidden = false;
-      img.src = item.image_url;
-      img.alt = item.place_name ? `${item.place_name} 圖片` : "行程圖片";
-      img.addEventListener("error", () => {
-        media.hidden = true;
-        card.classList.remove("has-image");
-      }, { once: true });
-      card.classList.add("has-image");
-    } else {
-      media.hidden = true;
-      card.classList.remove("has-image");
-    }
+    node.addEventListener("click", () => {
+      if (state.isEditMode) return;
+      focusItem(item.id, { openPopup: true, scrollCard: false, flyTo: true });
+    });
 
-    focusBtn.disabled = !item.hasCoordinates;
-    mapsBtn.href = item.google_maps_url || "#";
-    mapsBtn.setAttribute("aria-disabled", item.google_maps_url ? "false" : "true");
-    if (!item.google_maps_url) mapsBtn.removeAttribute("href");
-
-    card.addEventListener("click", () => selectItem(item.id, { panTo: true }));
-    card.addEventListener("keydown", (event) => {
+    node.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        selectItem(item.id, { panTo: true });
+        if (state.isEditMode) return;
+        focusItem(item.id, { openPopup: true, scrollCard: false, flyTo: true });
       }
     });
-    focusBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      selectItem(item.id, { panTo: true, zoom: 15 });
-    });
-    editBtn.textContent = "編輯這筆";
-    deleteBtn.textContent = "刪除";
 
-    editBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      openItemModal("edit", item);
-    });
-    deleteBtn.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      await handleDelete(item);
+    if (item.id === state.selectedId) node.classList.add("active");
+    fragment.appendChild(node);
+  });
+
+  itineraryListEl.appendChild(fragment);
+}
+
+function renderMap(items, { fitBounds = false } = {}) {
+  state.markersLayer.clearLayers();
+  state.routeLayer.clearLayers();
+  state.markerMap.clear();
+
+  const mappable = items.filter((item) => item.hasCoordinates);
+  const dayColor = getDayColor(state.currentDay);
+
+  if (!mappable.length) {
+    if (mapEmptyStateEl) mapEmptyStateEl.classList.add("is-hidden");
+    state.map.setView(defaultCenter, 10);
+    return;
+  }
+
+  if (mappable.length >= 2) {
+    const routePoints = mappable.map((item) => [item.lat, item.lng]);
+    L.polyline(routePoints, {
+      color: "#ffffff",
+      weight: 10,
+      opacity: 0.58,
+      lineCap: "round",
+      lineJoin: "round",
+    }).addTo(state.routeLayer);
+
+    L.polyline(routePoints, {
+      color: dayColor,
+      weight: 5.5,
+      opacity: 0.96,
+      lineCap: "round",
+      lineJoin: "round",
+      dashArray: "1 10",
+    }).addTo(state.routeLayer);
+  }
+
+  mappable.forEach((item) => {
+    const marker = L.marker([item.lat, item.lng], {
+      icon: createNumberedIcon(item.order, dayColor),
+      keyboard: true,
+      title: item.place_name || `景點 ${item.order}`,
     });
 
-    itineraryListEl.appendChild(fragment);
+    marker.bindPopup(buildPopupHtml(item), { closeButton: false, autoPanPadding: [24, 160] });
+    marker.on("click", () => {
+      focusItem(item.id, { openPopup: false, scrollCard: true, flyTo: false });
+      marker.openPopup();
+    });
+
+    marker.addTo(state.markersLayer);
+    state.markerMap.set(item.id, marker);
+  });
+
+  syncMarkerActiveState();
+  if (fitBounds) fitCurrentDayBounds({ animate: false });
+}
+
+function buildPopupHtml(item) {
+  const title = escapeHtml(item.place_name || `景點 ${item.order}`);
+  const address = getDisplayAddress(item);
+  const addressHtml = address ? `<br><span>${escapeHtml(address)}</span>` : "";
+  const note = escapeHtml(item.note || "尚未填寫備註");
+  const time = escapeHtml(formatTimeRange(item.start_time, item.end_time) || "時間未定");
+  const maps = item.google_maps_url
+    ? `<div style="margin-top:10px;"><a href="${item.google_maps_url}" target="_blank" rel="noreferrer noopener">在 Google Maps 開啟</a></div>`
+    : "";
+  return `<div><strong>${title}</strong><br><span>${time}</span>${addressHtml}<br><span>${note}</span>${maps}</div>`;
+}
+
+function createNumberedIcon(order, color) {
+  return L.divIcon({
+    className: "custom-div-icon",
+    html: `<div class="marker-shell" style="--marker-color:${color}"><div class="marker-badge">${escapeHtml(String(order))}</div></div>`,
+    iconSize: [38, 50],
+    iconAnchor: [19, 38],
+    popupAnchor: [0, -32],
   });
 }
 
+function syncMarkerActiveState() {
+  state.markerMap.forEach((marker, id) => {
+    const shell = marker.getElement()?.querySelector(".marker-shell");
+    if (shell) shell.classList.toggle("is-active", id === state.selectedId);
+  });
+}
+
+function focusItem(itemId, options = {}) {
+  const item = getCurrentItems().find((entry) => entry.id === itemId);
+  if (!item) return;
+
+  state.selectedId = item.id;
+  renderList(getCurrentItems());
+  syncMarkerActiveState();
+
+  if (item.hasCoordinates && options.flyTo !== false) {
+    state.map.flyTo([item.lat, item.lng], Math.max(state.map.getZoom(), 14), {
+      animate: true,
+      duration: 0.65,
+    });
+  }
+
+  if (item.hasCoordinates && options.openPopup) {
+    const marker = state.markerMap.get(item.id);
+    if (marker) setTimeout(() => marker.openPopup(), 200);
+  }
+
+  if (options.scrollCard) {
+    const card = itineraryListEl.querySelector(`[data-id="${CSS.escape(item.id)}"]`);
+    card?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
+function fitCurrentDayBounds({ animate = true } = {}) {
+  const mappable = getCurrentItems().filter((item) => item.hasCoordinates);
+  if (!mappable.length) {
+    state.map.flyTo(defaultCenter, 10, { animate });
+    return;
+  }
+  if (mappable.length === 1) {
+    state.map.flyTo([mappable[0].lat, mappable[0].lng], 14, { animate });
+    return;
+  }
+  const bounds = L.latLngBounds(mappable.map((item) => [item.lat, item.lng]));
+  state.map.fitBounds(bounds.pad(0.2), { animate, paddingTopLeft: [20, 100], paddingBottomRight: [20, 170] });
+}
+
+function closeAnyOpenPopup() {
+  state.map.closePopup();
+}
 
 function syncEditModeUi() {
   if (!toggleEditModeBtn) return;
@@ -375,116 +588,7 @@ function syncEditModeUi() {
 function toggleEditMode() {
   state.isEditMode = !state.isEditMode;
   syncEditModeUi();
-  renderList(getItemsForDay(state.currentDay));
-}
-
-function renderMap(items, { fitBounds = false } = {}) {
-  state.markersLayer.clearLayers();
-  state.routeLayer.clearLayers();
-  state.markerMap.clear();
-
-  const mapped = items.filter((item) => item.hasCoordinates);
-  if (!mapped.length) {
-    state.map.setView(defaultCenter, 10);
-    return;
-  }
-
-  const color = getDayColor(state.currentDay);
-  mapped.forEach((item) => {
-    const marker = createMarker(item, color);
-    marker.addTo(state.markersLayer);
-    state.markerMap.set(item.id, marker);
-  });
-
-  if (mapped.length >= 2) {
-    const coords = mapped.map((item) => [item.lat, item.lng]);
-    L.polyline(coords, {
-      color,
-      weight: 4,
-      opacity: 0.8,
-      dashArray: "1 11",
-      lineCap: "round",
-    }).addTo(state.routeLayer);
-  }
-
-  highlightSelectedMarker();
-  if (fitBounds) fitCurrentDayBounds({ animate: false });
-}
-
-function createMarker(item, color) {
-  const iconHtml = `
-    <div class="marker-shell" style="--marker-color:${color}">
-      <div class="marker-badge">${item.order}</div>
-    </div>
-  `;
-  const marker = L.marker([item.lat, item.lng], {
-    icon: L.divIcon({
-      html: iconHtml,
-      className: "custom-marker-icon",
-      iconSize: [38, 50],
-      iconAnchor: [19, 44],
-      popupAnchor: [0, -40],
-    })
-  });
-
-  const sameAddress = normalizeCompareText(item.place_name) && normalizeCompareText(item.place_name) === normalizeCompareText(item.address);
-  const addressLine = item.address && !sameAddress ? `<div>${escapeHtml(item.address)}</div>` : "";
-  const noteLine = item.note ? `<div>${escapeHtml(item.note)}</div>` : "";
-  const mapsLink = item.google_maps_url ? `<div style="margin-top:8px;"><a href="${escapeAttribute(item.google_maps_url)}" target="_blank" rel="noreferrer noopener">在 Google Maps 開啟</a></div>` : "";
-
-  marker.bindPopup(`
-    <div>
-      <strong>${escapeHtml(item.place_name || "未命名地點")}</strong>
-      <div>${escapeHtml(formatTimeRange(item.start_time, item.end_time) || "未排時間")}</div>
-      ${addressLine}
-      ${noteLine}
-      ${mapsLink}
-    </div>
-  `);
-
-  marker.on("click", () => selectItem(item.id, { panTo: false }));
-  return marker;
-}
-
-function selectItem(id, { panTo = false, zoom = null } = {}) {
-  state.selectedId = id;
-  const items = getItemsForDay(state.currentDay);
-  const selected = items.find((item) => item.id === id);
-  renderList(items);
-  highlightSelectedMarker();
-  if (selected && panTo && selected.hasCoordinates) {
-    state.map.flyTo([selected.lat, selected.lng], zoom || Math.max(state.map.getZoom(), 14), { duration: 0.6 });
-    const marker = state.markerMap.get(id);
-    marker?.openPopup();
-  }
-}
-
-function highlightSelectedMarker() {
-  state.markerMap.forEach((marker, id) => {
-    const markerShell = marker.getElement()?.querySelector(".marker-shell");
-    markerShell?.classList.toggle("is-active", id === state.selectedId);
-  });
-}
-
-function fitCurrentDayBounds({ animate = true } = {}) {
-  const items = getItemsForDay(state.currentDay).filter((item) => item.hasCoordinates);
-  if (!items.length) return;
-  const bounds = L.latLngBounds(items.map((item) => [item.lat, item.lng]));
-  state.map.fitBounds(bounds, { padding: [48, 48], animate, maxZoom: 14 });
-}
-
-function renderNoData() {
-  heroDateEl.textContent = "";
-  heroTitleEl.textContent = SITE_TITLE;
-  currentDayTitleEl.textContent = "目前沒有行程資料";
-  itineraryListEl.innerHTML = '<div class="empty-state-card">目前 Google Sheets 沒有可用資料。</div>';
-}
-
-function renderLoadError(error) {
-  heroDateEl.textContent = "";
-  heroTitleEl.textContent = SITE_TITLE;
-  currentDayTitleEl.textContent = "資料載入失敗";
-  itineraryListEl.innerHTML = `<div class="empty-state-card">${escapeHtml(error.message || String(error))}</div>`;
+  renderList(getCurrentItems());
 }
 
 function openItemModal(mode = "add", item = null) {
@@ -527,7 +631,7 @@ function fillFormWithItem(item) {
 
 function presetFormDefaults() {
   const today = state.currentDay || "day1";
-  const items = getItemsForDay(today);
+  const items = getCurrentItems();
   const nextOrder = (items.reduce((max, item) => Math.max(max, Number(item.order) || 0), 0) || 0) + 1;
   const firstItemDate = items[0]?.date || formatDateInput(new Date());
   itemFormEl.elements.day.value = today;
@@ -598,13 +702,13 @@ async function handleItemSubmit(event) {
 }
 
 async function handleDelete(item) {
-  const adminKey = window.prompt(`刪除「${item.place_name || '未命名地點'}」\n請輸入管理密碼：`);
+  const adminKey = window.prompt(`刪除「${item.place_name || "未命名地點"}」\n請輸入管理密碼：`);
   if (adminKey === null) return;
   if (!adminKey.trim()) {
-    window.alert("未輸入管理密碼。", "error");
+    window.alert("未輸入管理密碼。");
     return;
   }
-  if (!window.confirm(`確定要刪除「${item.place_name || '未命名地點'}」嗎？`)) return;
+  if (!window.confirm(`確定要刪除「${item.place_name || "未命名地點"}」嗎？`)) return;
 
   try {
     const result = await requestJsonp(
@@ -614,8 +718,7 @@ async function handleDelete(item) {
     if (!result || result.ok !== true) {
       throw new Error(result?.message || "刪除失敗");
     }
-    const currentItems = getItemsForDay(state.currentDay);
-    const fallbackId = currentItems.find((x) => x.id !== item.id)?.id || null;
+    const fallbackId = getCurrentItems().find((x) => x.id !== item.id)?.id || null;
     await reloadFromRemote(state.currentDay, fallbackId, true);
   } catch (error) {
     window.alert(error.message || String(error));
@@ -628,7 +731,7 @@ function validateFormPayload(payload, mode) {
   if (!payload.day || !/^day\d+$/i.test(payload.day.trim())) return "day 欄請填像 day1、day2。";
   if (!payload.order || !/^\d+$/.test(String(payload.order).trim())) return "順序必須是正整數。";
   if (!payload.place_name || !payload.place_name.trim()) return "請填地點名稱。";
-  if (payload.coords && !/^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/.test(payload.coords)) return "coords 格式請填「緯度, 經度」。";
+  if (!payload.coords || !/^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/.test(payload.coords)) return "coords 格式請填「緯度, 經度」。";
   if (payload.start_time && !/^\d{2}:\d{2}$/.test(payload.start_time)) return "開始時間格式需為 HH:MM。";
   if (payload.end_time && !/^\d{2}:\d{2}$/.test(payload.end_time)) return "結束時間格式需為 HH:MM。";
   if (payload.google_maps_url && !/^https?:\/\//i.test(payload.google_maps_url.trim())) return "Google Maps 連結必須是 http 或 https 開頭。";
@@ -666,20 +769,11 @@ function formatCoords(lat, lng) {
   return "";
 }
 
-function getDayColor(day) {
-  const index = Math.max(0, extractDayNumber(day) - 1) % DAY_COLORS.length;
-  return DAY_COLORS[index];
-}
-
 function formatDateInput(dateObj) {
   const y = dateObj.getFullYear();
   const m = String(dateObj.getMonth() + 1).padStart(2, "0");
   const d = String(dateObj.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
-}
-
-function normalizeCompareText(value) {
-  return String(value || "").trim().toLowerCase();
 }
 
 function escapeHtml(value) {
@@ -691,6 +785,65 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function escapeAttribute(value) {
-  return escapeHtml(value).replace(/`/g, "&#96;");
+function hexToRgba(hex, alpha) {
+  const clean = hex.replace("#", "");
+  const bigint = parseInt(clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function renderNoData() {
+  itineraryListEl.innerHTML = `<div class="empty-state-card">找不到行程資料。</div>`;
+}
+
+function renderLoadError(error) {
+  itineraryListEl.innerHTML = `<div class="empty-state-card">無法讀取 itinerary 資料：${escapeHtml(error.message || "Load failed")}</div>`;
+}
+
+function setupBottomSheet() {
+  const snapPoints = [34, 54, 82];
+  let dragging = false;
+  let startY = 0;
+  let startVh = state.sheetVh;
+
+  applySheetHeight(state.sheetVh);
+
+  const onPointerMove = (event) => {
+    if (!dragging) return;
+    const delta = startY - event.clientY;
+    const vhDelta = (delta / window.innerHeight) * 100;
+    const next = clamp(startVh + vhDelta, 28, 88);
+    applySheetHeight(next);
+  };
+
+  const onPointerUp = () => {
+    if (!dragging) return;
+    dragging = false;
+    const nearest = snapPoints.reduce((best, point) => Math.abs(point - state.sheetVh) < Math.abs(best - state.sheetVh) ? point : best, snapPoints[0]);
+    applySheetHeight(nearest);
+    document.body.style.userSelect = "";
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+  };
+
+  sheetHandleArea?.addEventListener("pointerdown", (event) => {
+    dragging = true;
+    startY = event.clientY;
+    startVh = state.sheetVh;
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  });
+}
+
+function applySheetHeight(vh) {
+  state.sheetVh = clamp(vh, 28, 88);
+  document.documentElement.style.setProperty("--sheet-height", `${state.sheetVh}vh`);
+  requestAnimationFrame(() => state.map?.invalidateSize());
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
