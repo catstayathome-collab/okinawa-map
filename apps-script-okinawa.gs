@@ -37,23 +37,23 @@ function sheetToObjects_() {
 }
 
 function doGet(e) {
-  const items = sheetToObjects_();
-  const payload = {
-    ok: true,
-    updatedAt: new Date().toISOString(),
-    count: items.length,
-    items: items,
-  };
+  try {
+    if (e && e.parameter && e.parameter.action === 'add_item') {
+      const payload = addItemFromRequest_(e.parameter);
+      return response_(payload, e.parameter.prefix);
+    }
 
-  if (e && e.parameter && e.parameter.prefix) {
-    return ContentService
-      .createTextOutput(`${e.parameter.prefix}(${JSON.stringify(payload)})`)
-      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+    const items = sheetToObjects_();
+    const payload = {
+      ok: true,
+      updatedAt: new Date().toISOString(),
+      count: items.length,
+      items: items,
+    };
+    return response_(payload, e && e.parameter ? e.parameter.prefix : '');
+  } catch (error) {
+    return response_({ ok: false, message: error.message || String(error) }, e && e.parameter ? e.parameter.prefix : '');
   }
-
-  return ContentService
-    .createTextOutput(JSON.stringify(payload))
-    .setMimeType(ContentService.MimeType.JSON);
 }
 
 function doPost(e) {
@@ -62,32 +62,36 @@ function doPost(e) {
     if (!body || body.action !== 'add_item') {
       return jsonResponse_({ ok: false, message: '未知動作。' });
     }
-
-    const adminKey = body.admin_key || 'okinawa2026';
-    const expectedKey = PropertiesService.getScriptProperties().getProperty('ADMIN_KEY') || '';
-    if (!expectedKey) {
-      return jsonResponse_({ ok: false, message: '尚未設定 ADMIN_KEY。' });
-    }
-    if (adminKey !== expectedKey) {
-      return jsonResponse_({ ok: false, message: '管理密碼錯誤。' });
-    }
-
-    const item = body.item || {};
-    const validationError = validateItem_(item);
-    if (validationError) {
-      return jsonResponse_({ ok: false, message: validationError });
-    }
-
-    const sheet = getTargetSheet_();
-    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0].map(h => String(h).trim());
-    const rowObject = buildRowObject_(item);
-    const row = headers.map(header => rowObject[header] ?? '');
-    sheet.appendRow(row);
-
-    return jsonResponse_({ ok: true, message: '已新增到 Google Sheets。' });
+    const payload = addItemFromRequest_(body);
+    return jsonResponse_(payload);
   } catch (error) {
     return jsonResponse_({ ok: false, message: error.message || String(error) });
   }
+}
+
+function addItemFromRequest_(params) {
+  const adminKey = params.admin_key || '';
+  const expectedKey = PropertiesService.getScriptProperties().getProperty('ADMIN_KEY') || '';
+  if (!expectedKey) {
+    return { ok: false, message: '尚未設定 ADMIN_KEY。' };
+  }
+  if (adminKey !== expectedKey) {
+    return { ok: false, message: '管理密碼錯誤。' };
+  }
+
+  const item = params.item || params;
+  const validationError = validateItem_(item);
+  if (validationError) {
+    return { ok: false, message: validationError };
+  }
+
+  const sheet = getTargetSheet_();
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0].map(h => String(h).trim());
+  const rowObject = buildRowObject_(item);
+  const row = headers.map(header => rowObject[header] ?? '');
+  sheet.appendRow(row);
+
+  return { ok: true, message: '已新增到 Google Sheets。' };
 }
 
 function parsePostBody_(e) {
@@ -112,7 +116,7 @@ function validateItem_(item) {
 }
 
 function buildRowObject_(item) {
-  const output = {
+  return {
     id: item.id || '',
     date: item.date || '',
     day: item.day || '',
@@ -128,7 +132,6 @@ function buildRowObject_(item) {
     image_url: item.image_url || '',
     status: item.status || 'planned',
   };
-  return output;
 }
 
 function autoGoogleMapsUrl_(item) {
@@ -137,6 +140,15 @@ function autoGoogleMapsUrl_(item) {
   }
   const q = [item.place_name || '', item.address || ''].join(' ').trim();
   return q ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q) : '';
+}
+
+function response_(obj, prefix) {
+  if (prefix) {
+    return ContentService
+      .createTextOutput(prefix + '(' + JSON.stringify(obj) + ')')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return jsonResponse_(obj);
 }
 
 function jsonResponse_(obj) {

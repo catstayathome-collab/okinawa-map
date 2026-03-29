@@ -106,15 +106,19 @@ function presetFormDefaults() {
   if (!addFormEl.elements.status.value) addFormEl.elements.status.value = "planned";
 }
 
-function loadRemoteSheetData() {
+function requestJsonp(params = {}, { timeout = 12000 } = {}) {
   return new Promise((resolve, reject) => {
     const callbackName = `__sheetCallback_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const timeoutId = setTimeout(() => {
       cleanup();
       reject(new Error("Google Sheets 連線逾時"));
-    }, 12000);
+    }, timeout);
 
     const url = new URL(SHEET_API_URL);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === "") return;
+      url.searchParams.set(key, String(value));
+    });
     url.searchParams.set("prefix", callbackName);
 
     const script = document.createElement("script");
@@ -133,15 +137,19 @@ function loadRemoteSheetData() {
 
     window[callbackName] = (payload) => {
       cleanup();
-      if (!payload || payload.ok !== true || !Array.isArray(payload.items)) {
-        reject(new Error("Google Sheets 回傳格式不正確"));
-        return;
-      }
-      resolve(payload.items);
+      resolve(payload);
     };
 
     document.body.appendChild(script);
   });
+}
+
+async function loadRemoteSheetData() {
+  const payload = await requestJsonp();
+  if (!payload || payload.ok !== true || !Array.isArray(payload.items)) {
+    throw new Error(payload?.message || "Google Sheets 回傳格式不正確");
+  }
+  return payload.items;
 }
 
 function normalizeItems(items) {
@@ -321,6 +329,7 @@ function renderList(items) {
       card.classList.add("has-image");
     } else {
       media.hidden = true;
+      img.removeAttribute("src");
       card.classList.remove("has-image");
     }
 
@@ -492,24 +501,37 @@ async function handleAddSubmit(event) {
   };
 
   try {
-    await fetch(SHEET_API_URL, {
-      method: "POST",
-      mode: "no-cors",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(requestPayload),
-    });
+    const payload = await requestJsonp({
+      action: "add_item",
+      admin_key: requestPayload.admin_key,
+      date: cleanItem.date,
+      day: cleanItem.day,
+      order: cleanItem.order,
+      place_name: cleanItem.place_name,
+      address: cleanItem.address,
+      coords: cleanItem.coords,
+      start_time: cleanItem.start_time,
+      end_time: cleanItem.end_time,
+      note: cleanItem.note,
+      category: cleanItem.category,
+      google_maps_url: cleanItem.google_maps_url,
+      image_url: cleanItem.image_url,
+      status: cleanItem.status,
+    }, { timeout: 15000 });
 
-    showFormMessage("已送出。Google Sheets 通常幾秒內會更新，等一下我會自動重新整理行程。", "success");
+    if (!payload || payload.ok !== true) {
+      throw new Error(payload?.message || "新增失敗，請稍後再試。");
+    }
 
-    setTimeout(async () => {
-      await refreshDataAfterAdd(cleanItem.day);
-      submitAddBtn.disabled = false;
-      addFormEl.reset();
-      closeAddModal();
-    }, 2200);
+    showFormMessage(payload.message || "已新增到 Google Sheets。", "success");
+
+    await refreshDataAfterAdd(cleanItem.day);
+    submitAddBtn.disabled = false;
+    addFormEl.reset();
+    setTimeout(() => closeAddModal(), 700);
   } catch (error) {
     console.error(error);
-    showFormMessage("送出失敗，請檢查 Apps Script 權限設定或管理密碼。", "error");
+    showFormMessage(error.message || "送出失敗，請檢查 Apps Script 權限設定。", "error");
     submitAddBtn.disabled = false;
   }
 }

@@ -233,8 +233,10 @@ a { color: inherit; }
 .itinerary-card {
   position: relative;
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
+  align-items: start;
+  justify-items: stretch;
   border-radius: 26px;
   padding: 16px 16px 16px 64px;
   background: var(--glass);
@@ -256,19 +258,26 @@ a { color: inherit; }
 }
 .itinerary-card.has-image {
   grid-template-columns: minmax(0, 1fr) 84px;
-  grid-template-areas:
-    "body media";
   align-items: start;
 }
+.itinerary-card.has-image .card-body {
+  grid-column: 1;
+  grid-row: 1;
+}
+.itinerary-card.has-image .card-media {
+  grid-column: 2;
+  grid-row: 1;
+}
 .card-body {
-  grid-area: body;
   min-width: 0;
+  width: 100%;
   text-align: left;
+  justify-self: stretch;
 }
 .card-media {
-  grid-area: media;
   justify-self: end;
   align-self: start;
+  display: block;
   width: 84px;
   height: 84px;
   border-radius: 22px;
@@ -281,6 +290,9 @@ a { color: inherit; }
   height: 100%;
   object-fit: cover;
   display: block;
+}
+.itinerary-card:not(.has-image) .card-media {
+  display: none !important;
 }
 .card-order {
   position: absolute;
@@ -345,16 +357,20 @@ a { color: inherit; }
   font-size: 0.95rem;
 }
 .card-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
   gap: 10px;
+  flex-wrap: nowrap;
   margin-top: 12px;
+  width: 100%;
 }
 .mini-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+  white-space: nowrap;
   border: 1px solid rgba(255,255,255,0.20);
   border-radius: 999px;
   min-height: 38px;
@@ -571,7 +587,13 @@ a { color: inherit; }
     height: 76px;
     border-radius: 20px;
   }
-  .mini-action { font-size: 0.92rem; padding-inline: 0.65rem; }
+  .card-actions {
+    gap: 8px;
+  }
+  .mini-action {
+    font-size: 0.9rem;
+    padding-inline: 0.65rem;
+  }
 }
 
 @media (min-width: 900px) {
