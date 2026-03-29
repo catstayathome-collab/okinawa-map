@@ -39,6 +39,7 @@ const cancelItemBtn = document.getElementById("cancel-item-btn");
 const submitItemBtn = document.getElementById("submit-item-btn");
 const formKickerEl = document.getElementById("form-kicker");
 const formTitleEl = document.getElementById("form-title");
+const autofillPlaceBtn = document.getElementById("autofill-place-btn");
 
 bootstrap();
 
@@ -80,6 +81,7 @@ function bindEvents() {
   closeItemModalBtn?.addEventListener("click", closeItemModal);
   cancelItemBtn?.addEventListener("click", closeItemModal);
   itemFormEl?.addEventListener("submit", handleItemSubmit);
+  autofillPlaceBtn?.addEventListener("click", handleAutofillPlace);
   itemModalEl?.addEventListener("click", (event) => {
     if (event.target === itemModalEl) closeItemModal();
   });
@@ -642,6 +644,71 @@ function presetFormDefaults() {
 
 function closeItemModal() {
   itemModalEl?.close();
+}
+
+
+async function handleAutofillPlace() {
+  if (!itemFormEl) return;
+  clearFormMessage();
+
+  const googleMapsUrl = String(itemFormEl.elements.google_maps_url?.value || "").trim();
+  const adminKey = String(itemFormEl.elements.admin_key?.value || "").trim();
+
+  if (!googleMapsUrl) {
+    showFormMessage("請先貼上 Google Maps 連結。", "error");
+    itemFormEl.elements.google_maps_url?.focus();
+    return;
+  }
+
+  if (!/^https?:\/\//i.test(googleMapsUrl)) {
+    showFormMessage("Google Maps 連結必須是 http 或 https 開頭。", "error");
+    itemFormEl.elements.google_maps_url?.focus();
+    return;
+  }
+
+  if (!adminKey) {
+    showFormMessage("請先輸入管理密碼，才能使用自動帶入。", "error");
+    itemFormEl.elements.admin_key?.focus();
+    return;
+  }
+
+  autofillPlaceBtn.disabled = true;
+  showFormMessage("正在解析 Google Maps 連結並帶入地點名稱與座標…", "info");
+
+  try {
+    const result = await requestJsonp(
+      {
+        action: "resolve_place",
+        admin_key: adminKey,
+        google_maps_url: googleMapsUrl,
+      },
+      { includeEmpty: true, timeout: 20000 }
+    );
+
+    if (!result || result.ok !== true) {
+      throw new Error(result?.message || "無法自動帶入資料");
+    }
+
+    if (result.place_name) {
+      itemFormEl.elements.place_name.value = result.place_name;
+    }
+    if (result.coords) {
+      itemFormEl.elements.coords.value = result.coords;
+    }
+    if (result.google_maps_url) {
+      itemFormEl.elements.google_maps_url.value = result.google_maps_url;
+    }
+
+    const parts = [];
+    if (result.place_name) parts.push(`名稱：${result.place_name}`);
+    if (result.coords) parts.push(`座標：${result.coords}`);
+    showFormMessage(parts.length ? `已自動帶入。${parts.join("｜")}` : "已自動帶入可辨識資料。", "success");
+  } catch (error) {
+    console.error(error);
+    showFormMessage(error.message || String(error), "error");
+  } finally {
+    autofillPlaceBtn.disabled = false;
+  }
 }
 
 async function handleItemSubmit(event) {

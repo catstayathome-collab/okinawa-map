@@ -430,6 +430,25 @@ a { color: inherit; }
 }
 .form-grid textarea { resize: vertical; min-height: 92px; }
 .form-grid .span-2 { grid-column: span 2; }
+
+.smart-fill-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.smart-fill-btn {
+  min-height: 34px;
+  padding: 0.42rem 0.78rem;
+  font-size: 0.88rem;
+  flex: 0 0 auto;
+}
+.smart-fill-hint {
+  font-size: 0.80rem;
+  color: #5a738f;
+}
+
 .form-tips {
   margin: 14px 0 0;
   padding-left: 18px;

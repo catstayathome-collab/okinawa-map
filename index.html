@@ -139,6 +139,10 @@
         <label class="span-2">
           <span>Google Maps 連結</span>
           <input name="google_maps_url" type="url" placeholder="https://maps.app.goo.gl/... 或 https://www.google.com/maps/..." />
+          <div class="smart-fill-row">
+            <button type="button" id="autofill-place-btn" class="secondary-btn smart-fill-btn">自動帶入名稱＋座標</button>
+            <span class="smart-fill-hint">需要先輸入管理密碼；只在你按下按鈕時才會查詢。</span>
+          </div>
         </label>
         <label class="span-2">
           <span>圖片網址</span>
@@ -159,8 +163,8 @@
       </div>
 
       <ul class="form-tips">
-        <li>目前免費版只會先存入 <code>google_maps_url</code>。</li>
-        <li>地點名稱、coords、圖片網址仍需手動填寫。</li>
+        <li>目前可由 Google Maps 連結自動帶入 <code>place_name</code> 與 <code>coords</code>。</li>
+        <li>圖片網址仍需手動填寫；如自動帶入不精準，可再自行修改。</li>
         <li>編輯與刪除同樣需要管理密碼。</li>
       </ul>
 
