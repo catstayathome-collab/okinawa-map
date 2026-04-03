@@ -41,7 +41,6 @@ a { color: inherit; }
 #map { position: absolute; inset: 0; z-index: 0; }
 .map-shade {
   position: absolute; inset: 0; z-index: 1; pointer-events: none;
-  background: linear-gradient(180deg, rgba(7, 13, 24, 0.62) 0%, rgba(7, 13, 24, 0.15) 12%, rgba(7, 13, 24, 0.10) 36%, rgba(7, 13, 24, 0.42) 50%);
 }
 
 .hero-overlay {
@@ -88,10 +87,7 @@ a { color: inherit; }
   cursor: pointer;
 }
 .day-tabs.day-tabs-top.is-scroll .day-tab { flex: 0 0 122px; }
-.day-tabs-top .day-tab.active {
-  background: rgba(17, 28, 52, 0.42);
-  border-color: rgba(255,255,255,0.24);
-}
+
 .day-tab-label { display: block; font-weight: 800; font-size: 0.92rem; line-height: 1.02; }
 .day-tab-meta { display: inline-flex; align-items: center; justify-content: center; gap: 0.28rem; margin-top: 6px; font-size: 0.62rem; line-height: 1; opacity: 0.92; white-space: nowrap; }
 .day-tab-date, .day-tab-ratio { white-space: nowrap; }
