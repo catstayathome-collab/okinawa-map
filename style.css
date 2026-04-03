@@ -39,10 +39,7 @@ a { color: inherit; }
 
 .map-stage { position: relative; min-height: 100dvh; }
 #map { position: absolute; inset: 0; z-index: 0; }
-.map-shade {
-  position: absolute; inset: 0; z-index: 1; pointer-events: none;
-  background: linear-gradient(180deg, rgba(7, 13, 24, 0.62) 0%, rgba(7, 13, 24, 0.15) 24%, rgba(7, 13, 24, 0.10) 50%, rgba(7, 13, 24, 0.42) 100%);
-}
+
 
 .hero-overlay {
   position: absolute; inset: 0 0 auto; z-index: 2; color: #fff;
