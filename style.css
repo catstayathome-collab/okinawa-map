@@ -63,7 +63,7 @@ a { color: inherit; }
   gap: 8px;
   width: 100%;
   overflow-x: auto;
-  padding: 0 0 3px;
+  padding: 0 0 6px;
   scrollbar-width: none;
   scroll-snap-type: x proximity;
 }
