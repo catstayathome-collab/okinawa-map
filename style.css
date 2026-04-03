@@ -41,7 +41,7 @@ a { color: inherit; }
 #map { position: absolute; inset: 0; z-index: 0; }
 .map-shade {
   position: absolute; inset: 0; z-index: 1; pointer-events: none;
-  background: linear-gradient(180deg, rgba(7, 13, 24, 0.62) 0%, rgba(7, 13, 24, 0.15) 28%, rgba(7, 13, 24, 0.10) 52%, rgba(7, 13, 24, 0.42) 100%);
+  background: linear-gradient(180deg, rgba(7, 13, 24, 0.62) 0%, rgba(7, 13, 24, 0.15) 24%, rgba(7, 13, 24, 0.10) 50%, rgba(7, 13, 24, 0.42) 100%);
 }
 
 .hero-overlay {
@@ -63,7 +63,7 @@ a { color: inherit; }
   gap: 8px;
   width: 100%;
   overflow-x: auto;
-  padding: 0 0 6px;
+  padding: 0 0 3px;
   scrollbar-width: none;
   scroll-snap-type: x proximity;
 }
