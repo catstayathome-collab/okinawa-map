@@ -242,41 +242,60 @@ function expandGoogleMapsUrl_(inputUrl) {
 
 function extractPlaceQueryFromMapsUrl_(mapsUrl) {
   const expanded = expandGoogleMapsUrl_(mapsUrl);
-  let query = '';
+  const raw = String(expanded || '').trim();
 
-  try {
-    const url = new URL(expanded);
-
-    if (url.searchParams.get('query')) {
-      query = url.searchParams.get('query');
-    } else if (url.searchParams.get('q')) {
-      query = url.searchParams.get('q');
-    }
-
-    if (!query) {
-      const path = decodeURIComponent(url.pathname || '');
-      const placeMatch = path.match(/\/place\/([^/]+)/i);
-      const searchMatch = path.match(/\/search\/([^/]+)/i);
-      if (placeMatch && placeMatch[1]) {
-        query = placeMatch[1];
-      } else if (searchMatch && searchMatch[1]) {
-        query = searchMatch[1];
-      }
-    }
-
-    query = String(query || '').replace(/\+/g, ' ').trim();
-
-    if (!query) {
-      throw new Error('無法從 Google Maps 連結辨識地點關鍵字，請改貼較完整的地圖網址。');
-    }
-
-    return {
-      expandedUrl: expanded,
-      query: query
-    };
-  } catch (error) {
-    throw new Error('無法解析 Google Maps 連結。');
+  if (!raw) {
+    throw new Error('Google Maps 連結不可空白。');
   }
+
+  let placeName = '';
+  let lat = '';
+  let lng = '';
+
+  const placeMatch = raw.match(/\/maps\/place\/([^/]+)\//i);
+  if (placeMatch && placeMatch[1]) {
+    placeName = decodeURIComponent(placeMatch[1]).replace(/\+/g, ' ').trim();
+  }
+
+  // 先抓更接近 place pin 的 !3d !4d
+  const pinMatch = raw.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/);
+  if (pinMatch) {
+    lat = pinMatch[1];
+    lng = pinMatch[2];
+  } else {
+    // 沒有 pin 座標時，才退回抓 @lat,lng
+    const centerMatch = raw.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+    if (centerMatch) {
+      lat = centerMatch[1];
+      lng = centerMatch[2];
+    }
+  }
+
+  let query = '';
+  const queryMatch = raw.match(/[?&]query=([^&]+)/i);
+  const qMatch = raw.match(/[?&]q=([^&]+)/i);
+
+  if (queryMatch && queryMatch[1]) {
+    query = decodeURIComponent(queryMatch[1]).replace(/\+/g, ' ').trim();
+  } else if (qMatch && qMatch[1]) {
+    query = decodeURIComponent(qMatch[1]).replace(/\+/g, ' ').trim();
+  }
+
+  if (!query && placeName) {
+    query = placeName;
+  }
+
+  if (!query && !placeName) {
+    throw new Error('無法從 Google Maps 連結辨識地點關鍵字，請改貼較完整的地圖網址。');
+  }
+
+  return {
+    expandedUrl: expanded,
+    query: query || placeName,
+    directPlaceName: placeName || '',
+    directLat: lat || '',
+    directLng: lng || ''
+  };
 }
 
 function fetchJson_(url, options) {
@@ -306,11 +325,27 @@ function resolvePlaceFromGoogleMapsUrl_(params) {
   try {
     const parsed = extractPlaceQueryFromMapsUrl_(mapsUrl);
 
+    // 一律優先用 Places API 拿「名稱」
+    // directPlaceName 只當備援，不直接當最終答案
     const textSearchUrl = 'https://places.googleapis.com/v1/places:searchText';
+
     const textSearchPayload = {
       textQuery: parsed.query,
-      languageCode: 'zh-TW'
+      languageCode: 'ja'
     };
+
+    // 如果網址本身有解析出座標，就用來幫搜尋做 locationBias
+    if (parsed.directLat && parsed.directLng) {
+      textSearchPayload.locationBias = {
+        circle: {
+          center: {
+            latitude: Number(parsed.directLat),
+            longitude: Number(parsed.directLng)
+          },
+          radius: 80.0
+        }
+      };
+    }
 
     const searchResult = fetchJson_(textSearchUrl, {
       method: 'post',
@@ -324,12 +359,30 @@ function resolvePlaceFromGoogleMapsUrl_(params) {
     });
 
     if (!searchResult.places || !searchResult.places.length || !searchResult.places[0].id) {
+      // 找不到時才退回網址本身解析出的名稱與座標
+      if (parsed.directPlaceName && parsed.directLat && parsed.directLng) {
+        return {
+          ok: true,
+          message: 'Places API 找不到更精確結果，已改用 Google Maps 網址資訊。',
+          place_name: parsed.directPlaceName,
+          coords: formatCoords_(parsed.directLat, parsed.directLng),
+          lat: parsed.directLat,
+          lng: parsed.directLng,
+          google_maps_url: parsed.expandedUrl,
+          query_used: parsed.query
+        };
+      }
+
       return { ok: false, message: '找不到符合的地點，請改貼更完整的 Google Maps 連結。' };
     }
 
     const placeId = searchResult.places[0].id;
 
-    const detailsUrl = 'https://places.googleapis.com/v1/places/' + encodeURIComponent(placeId);
+    const detailsUrl =
+      'https://places.googleapis.com/v1/places/' +
+      encodeURIComponent(placeId) +
+      '?languageCode=ja';
+
     const details = fetchJson_(detailsUrl, {
       method: 'get',
       headers: {
@@ -339,21 +392,40 @@ function resolvePlaceFromGoogleMapsUrl_(params) {
       muteHttpExceptions: true
     });
 
-    const displayName = (details.displayName && details.displayName.text) ? details.displayName.text : '';
-    const lat = details.location && details.location.latitude != null ? details.location.latitude : '';
-    const lng = details.location && details.location.longitude != null ? details.location.longitude : '';
+    const displayName =
+      details.displayName && details.displayName.text
+        ? details.displayName.text
+        : '';
 
-    if (!displayName || lat === '' || lng === '') {
+    const detailsLat =
+      details.location && details.location.latitude != null
+        ? details.location.latitude
+        : '';
+
+    const detailsLng =
+      details.location && details.location.longitude != null
+        ? details.location.longitude
+        : '';
+
+    // 名稱優先用 Places 的日文化 displayName
+    const finalName = displayName || parsed.directPlaceName || '';
+
+    // 座標優先保留你從 Google Maps 網址抓到的 pin 座標
+    // 如果網址沒抓到，才退回 Places location
+    const finalLat = parsed.directLat || detailsLat;
+    const finalLng = parsed.directLng || detailsLng;
+
+    if (!finalName || finalLat === '' || finalLng === '') {
       return { ok: false, message: '已找到地點，但無法完整取得名稱或座標。' };
     }
 
     return {
       ok: true,
       message: '已自動帶入地點名稱與座標。',
-      place_name: displayName,
-      coords: formatCoords_(lat, lng),
-      lat: lat,
-      lng: lng,
+      place_name: finalName,
+      coords: formatCoords_(finalLat, finalLng),
+      lat: finalLat,
+      lng: finalLng,
       google_maps_url: parsed.expandedUrl,
       place_id: placeId,
       query_used: parsed.query
@@ -418,4 +490,13 @@ function doPost(e) {
 function testDoGet() {
   const output = doGet({ parameter: {} });
   Logger.log(output.getContent());
+}
+
+function testResolvePlace() {
+  const result = resolvePlaceFromGoogleMapsUrl_({
+    admin_key: 'okinawa2026',
+    google_maps_url: 'https://www.google.com/maps/place/%E9%82%A3%E9%9C%B8%E6%A9%9F%E5%A0%B4/@26.2001329,127.6054502,13z/data=!4m6!3m5!1s0x34e569c48e8b2c8d:0x504cceaa3756fe90!8m2!3d26.2001297!4d127.6466452!16zL20vMDNibmM3?authuser=0&entry=ttu&g_ep=EgoyMDI2MDMyNC4wIKXMDSoASAFQAw%3D%3D'
+  });
+
+  Logger.log(JSON.stringify(result));
 }
