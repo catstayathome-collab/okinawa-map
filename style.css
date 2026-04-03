@@ -44,7 +44,7 @@ a { color: inherit; }
 }
 
 .hero-overlay {
-  position: absolute; inset: 0 0 auto; z-index: 2; color: #fff;
+  position: absolute; inset: 0 0 auto; z-index: 2; color: #ffffff;
   padding: calc(18px + var(--safe-top)) 18px 14px;
 }
 .hero-topline { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -74,7 +74,7 @@ a { color: inherit; }
   border-radius: 24px;
   min-height: 60px;
   padding: 8px 10px;
-  color: #fff;
+  color: #000000;
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -82,12 +82,14 @@ a { color: inherit; }
   align-items: center;
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
-  box-shadow: var(--glass-shadow);
   scroll-snap-align: start;
   cursor: pointer;
 }
 .day-tabs.day-tabs-top.is-scroll .day-tab { flex: 0 0 122px; }
-
+.day-tabs-top .day-tab.active {
+  background: rgba(17, 28, 52, 0.42);
+  border-color: rgba(255,255,255,0.24);
+}
 .day-tab-label { display: block; font-weight: 800; font-size: 0.92rem; line-height: 1.02; }
 .day-tab-meta { display: inline-flex; align-items: center; justify-content: center; gap: 0.28rem; margin-top: 6px; font-size: 0.62rem; line-height: 1; opacity: 0.92; white-space: nowrap; }
 .day-tab-date, .day-tab-ratio { white-space: nowrap; }
